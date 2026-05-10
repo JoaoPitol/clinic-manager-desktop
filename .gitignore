@@ -1,0 +1,21 @@
+# Dependências
+node_modules/
+.npm/
+
+# Builds e Instaladores
+dist/
+release/
+build/
+out/
+*.exe
+*.msi
+
+# Banco de dados Local
+clinic_database.json
+data/
+
+# IDEs e Sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
