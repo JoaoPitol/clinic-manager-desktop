@@ -140,9 +140,23 @@ function createWindow() {
       mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     });
     mainWindow.loadURL(devUrl);
-    if (process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
-      mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+    // Em desenvolvimento abre DevTools por defeito (erros do React aparecem aqui).
+    // Desative: ELECTRON_OPEN_DEVTOOLS=0 npm run electron:dev:local
+    if (process.env.ELECTRON_OPEN_DEVTOOLS !== '0') {
+      mainWindow.webContents.once('dom-ready', () => {
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
+      });
     }
+
+    mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      const prefix = `[renderer:${level}]`;
+      if (level >= 2) console.error(prefix, message, sourceId && line != null ? `${sourceId}:${line}` : '');
+      else console.log(prefix, message);
+    });
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+      console.error('[Electron] render-process-gone:', details);
+    });
   } else {
     // Em produção carrega do arquivo buildado
     const loadPath = path.join(__dirname, 'dist', 'index.html');

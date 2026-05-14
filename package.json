@@ -10,8 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:start": "cross-env NODE_ENV=development electron .",
-    "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on tcp:127.0.0.1:5173 && npm run electron:start\"",
-    "electron:dev:local": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on tcp:127.0.0.1:5173 && cross-env NODE_ENV=development CLINIC_CLOUD_URL=http://127.0.0.1:3001 electron .\"",
+    "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http-get://127.0.0.1:5173 && npm run electron:start\"",
+    "electron:dev:local": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http-get://127.0.0.1:5173 && cross-env NODE_ENV=development CLINIC_CLOUD_URL=http://127.0.0.1:3001 electron .\"",
     "electron:build": "npm run build && electron-builder"
   },
   "build": {
