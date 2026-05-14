@@ -17,5 +17,20 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // O projeto ainda não está estruturado para as regras experimentais do
+      // React Compiler. Mantemos as regras clássicas de hooks e relaxamos as
+      // análises que exigiriam refactors grandes agora.
+      'react-hooks/immutability': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-refresh/only-export-components': 'off',
+      'no-unused-vars': ['error', {
+        varsIgnorePattern: '^React$',
+        argsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+    },
   },
 ])

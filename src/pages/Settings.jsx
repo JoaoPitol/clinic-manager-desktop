@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, Palette, Building, Moon, Sun, MessageCircle, DollarSign, Cloud, ListChecks, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
-import api from '../services/api';
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -57,7 +56,9 @@ const Settings = () => {
       if (savedTheme) {
         try {
           applyThemeToDocument(JSON.parse(savedTheme), false);
-        } catch (e) {}
+        } catch {
+          // Tema inválido no localStorage: ignora e mantém o tema atual.
+        }
       }
     };
   }, []);
@@ -224,13 +225,13 @@ const Settings = () => {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
-                  <label className="input-label">CNPJ</label>
+                  <label className="input-label">CNPJ (opcional)</label>
                   <input 
                     type="text" 
                     className="input-field" 
                     value={cnpj} 
+                    placeholder="Deixe em branco se não tiver CNPJ"
                     onChange={(e) => setCnpj(e.target.value)} 
-                    required 
                   />
                 </div>
                 <div>

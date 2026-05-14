@@ -256,7 +256,6 @@ const PatientDetails = () => {
 
   const tratamentos = patient.treatments || [];
   const totalPlanejado = tratamentos.reduce((acc, curr) => acc + parseFloat(curr.valor || 0), 0);
-  const totalConcluido = tratamentos.filter(t => t.status === 'Concluído').reduce((acc, curr) => acc + parseFloat(curr.valor || 0), 0);
   const totalPago = tratamentos.reduce((acc, t) => acc + (t.payments || []).reduce((b, p) => b + parseFloat(p.valor || 0), 0), 0);
   const saldoDevedor = Math.max(0, totalPlanejado - totalPago);
 

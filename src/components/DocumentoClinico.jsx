@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, FileText, Trash2, Eye, Shield, X, ChevronRight, PenLine } from 'lucide-react';
+import { Plus, Trash2, Eye, Shield, X, ChevronRight, PenLine } from 'lucide-react';
 import SignaturePad from './SignaturePad';
 import api from '../services/api';
 
@@ -46,7 +46,7 @@ export default function DocumentoClinico({ patient, patientId }) {
   const [patSig, setPatSig]         = useState(null);
   const [dentNome, setDentNome]     = useState('');
   const [dentCro, setDentCro]       = useState('');
-  const [dentSig, setDentSig]       = useState(null);
+  const [, setDentSig]              = useState(null);
   const [viewDoc, setViewDoc]       = useState(null);
   const [saving, setSaving]         = useState(false);
   const [showPad, setShowPad]       = useState(false);

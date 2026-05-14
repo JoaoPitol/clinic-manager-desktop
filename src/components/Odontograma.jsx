@@ -154,7 +154,7 @@ function AnnotationModal({ number, currentText, onSave, onClose }) {
 
 // ─── Tooth Column (number + svg + annotation dot) ─────────────────────────────
 
-function ToothColumn({ number, data, selectedCondition, onFaceClick, onAnnotationClick, isUpper }) {
+function ToothColumn({ number, data, onFaceClick, onAnnotationClick, isUpper }) {
   const hasNote = data?.anotacao?.trim();
   const numStyle = {
     fontSize: '10px', fontWeight: 600, color: 'var(--text-secondary)',
@@ -206,7 +206,7 @@ function ToothColumn({ number, data, selectedCondition, onFaceClick, onAnnotatio
 
 // ─── Row of teeth ─────────────────────────────────────────────────────────────
 
-function TeethRow({ teeth, odontData, selectedCondition, onFaceClick, onAnnotationClick, isUpper, label }) {
+function TeethRow({ teeth, odontData, onFaceClick, onAnnotationClick, isUpper }) {
   const mid = Math.floor(teeth.length / 2);
   const leftGroup  = teeth.slice(0, mid);
   const rightGroup = teeth.slice(mid);
@@ -217,14 +217,14 @@ function TeethRow({ teeth, odontData, selectedCondition, onFaceClick, onAnnotati
         {/* left quadrant */}
         <div style={{ display: 'flex', gap: '3px', paddingRight: '8px', borderRight: '1px dashed rgba(255,255,255,0.15)' }}>
           {leftGroup.map(n => (
-            <ToothColumn key={n} number={n} data={odontData[n]} selectedCondition={selectedCondition}
+            <ToothColumn key={n} number={n} data={odontData[n]}
               onFaceClick={onFaceClick} onAnnotationClick={onAnnotationClick} isUpper={isUpper} />
           ))}
         </div>
         {/* right quadrant */}
         <div style={{ display: 'flex', gap: '3px', paddingLeft: '8px' }}>
           {rightGroup.map(n => (
-            <ToothColumn key={n} number={n} data={odontData[n]} selectedCondition={selectedCondition}
+            <ToothColumn key={n} number={n} data={odontData[n]}
               onFaceClick={onFaceClick} onAnnotationClick={onAnnotationClick} isUpper={isUpper} />
           ))}
         </div>

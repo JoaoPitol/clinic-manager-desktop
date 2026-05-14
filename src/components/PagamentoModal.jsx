@@ -74,7 +74,7 @@ function openReceipt(html) {
   w.document.write(html);
   w.document.close();
   w.focus();
-  setTimeout(() => { try { w.print(); } catch (e) { /* ignore */ } }, 280);
+  setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 280);
 }
 
 const FORMAS_PAGAMENTO = ['Dinheiro', 'PIX', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto', 'Convênio'];

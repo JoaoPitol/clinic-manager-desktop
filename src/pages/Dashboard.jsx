@@ -18,7 +18,7 @@ const Dashboard = () => {
   const fetchPatients = async () => {
     try {
       const response = await api.get('/patients');
-      setPatients(response.data);
+      setPatients((response.data || []).filter((patient) => !patient._deleted));
     } catch (error) {
       console.error('Erro ao buscar pacientes', error);
       if (error.response?.status === 403) {
@@ -29,7 +29,12 @@ const Dashboard = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await window.electronAPI?.logoutClinic();
+    } catch (error) {
+      console.warn('Falha ao sincronizar no logout:', error);
+    }
     localStorage.removeItem('@ClinicManager:token');
     navigate('/login');
   };

@@ -107,6 +107,34 @@ setInterval(checkWhatsAppReminders, 60 * 1000);
 
 let mainWindow;
 
+async function syncClinicInBackground(clinicId, { notifyRenderer = true } = {}) {
+  const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
+  if (!token) return null;
+
+  const encKey = cloudEncryptionKeys.get(clinicId) || null;
+  const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
+  const result = await cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy).catch(() => ({
+    synced: false,
+    online: false,
+    reason: 'erro',
+    cloudAuth: true,
+  }));
+
+  if (notifyRenderer && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sync-status', {
+      synced: result.synced,
+      online: result.online !== false,
+      cloudAuth: result.cloudAuth !== false,
+      syncedAt: result.synced ? new Date().toISOString() : undefined,
+      noBulkSync: result.reason === 'no-sync-endpoint',
+      hint: result.cloudAuth === false ? 'nuvem-auth-falhou' : null,
+      detail: null,
+    });
+  }
+
+  return result;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -216,27 +244,7 @@ function createWindow() {
   if (syncInterval) clearInterval(syncInterval);
   syncInterval = setInterval(async () => {
     for (const [sessionToken, clinicId] of activeSessions) {
-      const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
-      if (!token) continue;
-      const encKey = cloudEncryptionKeys.get(clinicId) || null;
-      const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
-      const result = await cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy).catch(() => ({
-        synced: false,
-        online: false,
-        reason: 'erro',
-        cloudAuth: true,
-      }));
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('sync-status', {
-          synced: result.synced,
-          online: result.online !== false,
-          cloudAuth: result.cloudAuth !== false,
-          syncedAt: result.synced ? new Date().toISOString() : undefined,
-          noBulkSync: result.reason === 'no-sync-endpoint',
-          hint: null,
-          detail: null,
-        });
-      }
+      await syncClinicInBackground(clinicId);
     }
   }, 5 * 60 * 1000);
 }
@@ -441,9 +449,7 @@ app.on('ready', () => {
     if (clinicId) {
       const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
       if (token) {
-        const encKey = cloudEncryptionKeys.get(clinicId) || null;
-        const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
-        cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy).catch(() => {});
+        await syncClinicInBackground(clinicId, { notifyRenderer: false });
       }
       cloudTokens.delete(clinicId);
       cloudEncryptionKeys.delete(clinicId); // remover chave da memória ao deslogar
@@ -494,7 +500,13 @@ app.on('ready', () => {
   });
   ipcMain.handle('add-patient', async (event, sessionToken, data) => {
     if (!validateSession(sessionToken, data?.clinicId)) return { success: false, error: 'Sessão inválida' };
-    return db.addPatient(data);
+    const result = db.addPatient(data);
+    if (result.success) {
+      syncClinicInBackground(data.clinicId).catch((err) => {
+        console.error('[cloudSync] sync após add-patient:', err.message);
+      });
+    }
+    return result;
   });
   ipcMain.handle('get-patients', async (event, sessionToken, clinicId) => {
     if (!validateSession(sessionToken, clinicId)) return [];

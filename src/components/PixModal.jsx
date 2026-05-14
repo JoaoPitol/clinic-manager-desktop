@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { X, Copy, CheckCircle, RefreshCw, Info, Smartphone } from 'lucide-react';
+import { X, Copy, CheckCircle, Info, Smartphone } from 'lucide-react';
 import { generatePixBRCode } from '../utils/pixBRCode';
 
-const PixModal = ({ treatment, patient, clinicSettings, onClose, onConfirmPaid }) => {
+const PixModal = ({ treatment, clinicSettings, onClose, onConfirmPaid }) => {
   const canvasRef = useRef(null);
   const [copied, setCopied] = useState(false);
   const [pixPayload, setPixPayload] = useState('');

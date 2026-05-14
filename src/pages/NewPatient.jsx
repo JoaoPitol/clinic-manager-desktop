@@ -118,7 +118,7 @@ const NewPatient = () => {
     try {
       await api.post('/patients', formData);
       navigate('/dashboard'); // Volta para a listagem
-    } catch (err) {
+    } catch {
       setError('Erro ao cadastrar paciente. Verifique os dados e tente novamente.');
       setLoading(false);
     }

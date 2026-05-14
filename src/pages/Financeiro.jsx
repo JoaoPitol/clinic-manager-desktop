@@ -147,16 +147,6 @@ const DonutChart = ({ data, total, centerLabel = 'total' }) => {
   );
 };
 
-// ── status badge ─────────────────────────────────────────────────────────────
-const StatusBadge = ({ treatment }) => {
-  const s = calcularStatusPagamento(treatment);
-  return (
-    <span style={{ background: s.bg, color: s.color, padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600 }}>
-      {s.label}
-    </span>
-  );
-};
-
 // ═════════════════════════════════════════════════════════════════════════════
 const Financeiro = () => {
   const navigate = useNavigate();
