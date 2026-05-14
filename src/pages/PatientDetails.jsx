@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Plus, ChevronDown, ChevronUp, FileText, CheckCircle, Clock, Trash2, Edit2, X, DollarSign } from 'lucide-react';
+import { ArrowLeft, Plus, ChevronDown, ChevronUp, FileText, CheckCircle, Clock, Trash2, Edit2, X, DollarSign, BookOpen } from 'lucide-react';
 import api from '../services/api';
 import Odontograma from '../components/Odontograma';
 import DocumentoClinico from '../components/DocumentoClinico';
 import PagamentoModal, { calcularStatusPagamento } from '../components/PagamentoModal';
+import PlanoOrcamentoTabelas from '../components/PlanoOrcamentoTabelas';
+import AnexosPaciente from '../components/AnexosPaciente';
 
 const PatientDetails = () => {
   const { id } = useParams();
@@ -17,6 +19,8 @@ const PatientDetails = () => {
   const [editingTreatmentId, setEditingTreatmentId] = useState(null);
   const [pagamentoTreatment, setPagamentoTreatment] = useState(null);
   const [clinicSettings, setClinicSettings] = useState({});
+  const [proceduresLibrary, setProceduresLibrary] = useState([]);
+  const [showProcLibrary, setShowProcLibrary] = useState(false);
 
   // Tratamento Formulário
   const [novoTratamento, setNovoTratamento] = useState({
@@ -66,6 +70,7 @@ const PatientDetails = () => {
             nomeClinica: resp.clinic.nome,
             cnpj: resp.clinic.cnpj,
           });
+          setProceduresLibrary(resp.clinic.proceduresLibrary || []);
         }
       }
     } catch (err) {
@@ -379,6 +384,7 @@ const PatientDetails = () => {
         <Odontograma
           initialData={patient.odontograma || {}}
           patientId={id}
+          onSaved={(odontData) => setPatient((p) => (p ? { ...p, odontograma: odontData } : p))}
           onDentesSelecionados={(dentes) => {
             if (dentes.length > 0) {
               setNovoTratamento(prev => ({ ...prev, dente: dentes.join(', ') }));
@@ -386,8 +392,30 @@ const PatientDetails = () => {
           }}
         />
 
+        <PlanoOrcamentoTabelas
+          patientId={id}
+          patientNome={patient.nomeCompleto}
+          clinicSettings={clinicSettings}
+          tabelas={patient.tabelasOrcamentoPlano}
+          proceduresLibrary={proceduresLibrary}
+          onPersist={async (next) => {
+            await api.put(`/patients/${id}`, { tabelasOrcamentoPlano: next });
+            setPatient((p) => (p ? { ...p, tabelasOrcamentoPlano: next } : p));
+          }}
+        />
+
         {/* Documentos e Assinaturas */}
         <DocumentoClinico patient={patient} patientId={id} />
+
+        {/* Anexos */}
+        <AnexosPaciente
+          patient={patient}
+          patientId={id}
+          clinicId={localStorage.getItem('@ClinicManager:token')}
+          onAttachmentsChanged={(updatedList) =>
+            setPatient(p => p ? { ...p, attachments: updatedList } : p)
+          }
+        />
 
         {/* Plano de Tratamento */}
         <div className="glass-panel" style={{ padding: '32px' }}>
@@ -401,7 +429,7 @@ const PatientDetails = () => {
                 <span style={{ color: 'var(--success)' }}>Pago:</span> <strong style={{ color: 'var(--success)' }}>R$ {totalPago.toFixed(2)}</strong>
               </div>
               <div style={{ background: saldoDevedor > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.05)', padding: '8px 14px', borderRadius: '8px' }}>
-                <span style={{ color: saldoDevedor > 0 ? '#F59E0B' : 'var(--success)' }}>Saldo:</span> <strong style={{ color: saldoDevedor > 0 ? '#F59E0B' : 'var(--success)' }}>R$ {saldoDevedor.toFixed(2)}</strong>
+                <span style={{ color: saldoDevedor > 0 ? '#F59E0B' : 'var(--success)' }}>Em Débito:</span> <strong style={{ color: saldoDevedor > 0 ? '#F59E0B' : 'var(--success)' }}>R$ {saldoDevedor.toFixed(2)}</strong>
               </div>
             </div>
           </div>
@@ -481,7 +509,85 @@ const PatientDetails = () => {
 
           {/* Adicionar Novo Tratamento */}
           <form onSubmit={handleAddTreatment} style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-            <h4 style={{ marginBottom: '16px', fontSize: '1.1rem' }}>Adicionar Procedimento</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h4 style={{ margin: 0, fontSize: '1.1rem' }}>
+                {editingTreatmentId ? 'Editar Procedimento' : 'Adicionar Procedimento'}
+              </h4>
+              {proceduresLibrary.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowProcLibrary(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    background: showProcLibrary ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${showProcLibrary ? 'rgba(99,179,237,0.5)' : 'var(--border-color)'}`,
+                    borderRadius: '8px', padding: '7px 14px', cursor: 'pointer',
+                    color: showProcLibrary ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                    fontSize: '0.85rem', transition: 'all 0.2s',
+                  }}
+                >
+                  <BookOpen size={15} />
+                  Procedimentos Salvos ({proceduresLibrary.length})
+                </button>
+              )}
+            </div>
+
+            {/* Painel de procedimentos salvos */}
+            {showProcLibrary && proceduresLibrary.length > 0 && (
+              <div style={{
+                marginBottom: '16px', padding: '12px',
+                background: 'rgba(99,179,237,0.06)',
+                border: '1px solid rgba(99,179,237,0.25)',
+                borderRadius: '10px',
+              }}>
+                <p style={{ margin: '0 0 10px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  Clique em um procedimento para preencher automaticamente o nome e o valor:
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {proceduresLibrary.map(proc => (
+                    <button
+                      key={proc.id}
+                      type="button"
+                      onClick={() => {
+                        setNovoTratamento(prev => ({
+                          ...prev,
+                          procedimento: proc.nome,
+                          valor: proc.valorPadrao ?? '',
+                        }));
+                        setShowProcLibrary(false);
+                      }}
+                      style={{
+                        background: 'rgba(255,255,255,0.07)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '7px 14px',
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)',
+                        fontSize: '0.85rem',
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        transition: 'background 0.15s, border-color 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.background = 'rgba(99,179,237,0.15)';
+                        e.currentTarget.style.borderColor = 'rgba(99,179,237,0.4)';
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                        e.currentTarget.style.borderColor = 'var(--border-color)';
+                      }}
+                    >
+                      <span>{proc.nome}</span>
+                      {proc.valorPadrao && (
+                        <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>
+                          R$ {parseFloat(proc.valorPadrao).toFixed(2)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
               <div>
                 <label className="input-label" style={{ fontSize: '0.8rem' }}>Data</label>

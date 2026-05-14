@@ -235,7 +235,7 @@ function TeethRow({ teeth, odontData, selectedCondition, onFaceClick, onAnnotati
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function Odontograma({ initialData = {}, patientId, onDentesSelecionados }) {
+export default function Odontograma({ initialData = {}, patientId, onDentesSelecionados, onSaved }) {
   const [odontData, setOdontData]           = useState(initialData);
   const [selectedCondition, setCondition]   = useState('carie');
   const [dentition, setDentition]           = useState('adult'); // 'adult' | 'decidua'
@@ -289,6 +289,7 @@ export default function Odontograma({ initialData = {}, patientId, onDentesSelec
     try {
       const { default: api } = await import('../services/api');
       await api.put(`/patients/${patientId}`, { odontograma: odontData });
+      onSaved?.(odontData);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {

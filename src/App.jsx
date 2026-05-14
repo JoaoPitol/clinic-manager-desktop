@@ -6,6 +6,12 @@ import PatientDetails from './pages/PatientDetails'
 import Schedule from './pages/Schedule'
 import Settings from './pages/Settings'
 import Financeiro from './pages/Financeiro'
+import UpdateBanner from './components/UpdateBanner'
+
+function PrivateRoute({ children }) {
+  const token = localStorage.getItem('@ClinicManager:token');
+  return token ? children : <Navigate to="/login" replace />;
+}
 
 function App() {
   // Aplicar tema e nome no carregamento inicial
@@ -32,17 +38,22 @@ function App() {
     }
   }
 
+  const clinicId = localStorage.getItem('@ClinicManager:token');
+
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/new-patient" element={<NewPatient />} />
-      <Route path="/patient/:id" element={<PatientDetails />} />
-      <Route path="/schedule" element={<Schedule />} />
-      <Route path="/settings" element={<Settings />} />
-      <Route path="/financeiro" element={<Financeiro />} />
-    </Routes>
+    <>
+      <UpdateBanner clinicId={clinicId} />
+      <Routes>
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/dashboard"    element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/new-patient"  element={<PrivateRoute><NewPatient /></PrivateRoute>} />
+        <Route path="/patient/:id"  element={<PrivateRoute><PatientDetails /></PrivateRoute>} />
+        <Route path="/schedule"     element={<PrivateRoute><Schedule /></PrivateRoute>} />
+        <Route path="/settings"     element={<PrivateRoute><Settings /></PrivateRoute>} />
+        <Route path="/financeiro"   element={<PrivateRoute><Financeiro /></PrivateRoute>} />
+      </Routes>
+    </>
   )
 }
 

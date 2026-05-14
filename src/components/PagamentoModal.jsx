@@ -1,7 +1,81 @@
-import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, DollarSign, CheckCircle, AlertCircle, Clock, Smartphone, FileText } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Plus, Trash2, DollarSign, CheckCircle, AlertCircle, Clock, Smartphone, FileText, Printer } from 'lucide-react';
 import PixModal from './PixModal';
 import BoletoViewer from './BoletoViewer';
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function buildReceiptHtml({ treatment, patient, clinicSettings, pagamento }) {
+  const dataPag = pagamento.data
+    ? pagamento.data.split('-').reverse().join('/')
+    : new Date().toLocaleDateString('pt-BR');
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const valorFmt = parseFloat(pagamento.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <title>Recibo — ${escapeHtml(patient?.nomeCompleto || 'Paciente')}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, "Times New Roman", serif; padding: 48px; color: #111; max-width: 680px; margin: 0 auto; }
+    .header { text-align: center; border-bottom: 2px solid #222; padding-bottom: 20px; margin-bottom: 28px; }
+    .header h1 { font-size: 22pt; margin-bottom: 4px; }
+    .header p { font-size: 10pt; color: #555; margin-top: 4px; }
+    .badge { display: inline-block; border: 2px solid #222; padding: 6px 24px; border-radius: 4px; font-size: 10pt; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 28px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 32px; margin-bottom: 28px; font-size: 11pt; }
+    .grid .lbl { color: #666; font-size: 9pt; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+    .destaque { text-align: center; font-size: 26pt; font-weight: bold; border: 3px solid #111; border-radius: 6px; padding: 18px; margin-bottom: 28px; letter-spacing: .02em; }
+    .footer { border-top: 1px solid #aaa; padding-top: 20px; margin-top: 32px; display: flex; justify-content: space-between; font-size: 9pt; color: #666; }
+    .assin { text-align: center; }
+    .assin-line { border-bottom: 1px solid #555; width: 220px; margin: 32px auto 6px; }
+    @media print { body { padding: 24px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>${escapeHtml(clinicSettings?.nomeClinica || 'Clínica')}</h1>
+    ${clinicSettings?.cnpj ? `<p>CNPJ: ${escapeHtml(clinicSettings.cnpj)}</p>` : ''}
+  </div>
+
+  <div style="text-align:center;margin-bottom:24px">
+    <span class="badge">Recibo de Pagamento</span>
+  </div>
+
+  <div class="grid">
+    <div><p class="lbl">Paciente</p><p><strong>${escapeHtml(patient?.nomeCompleto || '-')}</strong></p></div>
+    <div><p class="lbl">Data do Pagamento</p><p><strong>${escapeHtml(dataPag)}</strong></p></div>
+    <div><p class="lbl">Procedimento</p><p>${escapeHtml(treatment.procedimento || '-')}${treatment.dente ? ` — Dente ${escapeHtml(treatment.dente)}` : ''}</p></div>
+    <div><p class="lbl">Forma de Pagamento</p><p>${escapeHtml(pagamento.formaPagamento || '-')}</p></div>
+    ${pagamento.observacao ? `<div style="grid-column:1/-1"><p class="lbl">Observação</p><p>${escapeHtml(pagamento.observacao)}</p></div>` : ''}
+  </div>
+
+  <div class="destaque">${escapeHtml(valorFmt)}</div>
+
+  <div class="assin">
+    <div class="assin-line"></div>
+    <p>${escapeHtml(clinicSettings?.nomeClinica || 'Responsável pela Clínica')}</p>
+  </div>
+
+  <div class="footer">
+    <span>Emitido em: ${escapeHtml(hoje)}</span>
+    <span>Documento não tem valor fiscal</span>
+  </div>
+</body>
+</html>`;
+}
+
+function openReceipt(html) {
+  const w = window.open('', '_blank', 'width=720,height=560');
+  if (!w) { alert('Bloqueio de pop-up impediu a impressão.'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => { try { w.print(); } catch (e) { /* ignore */ } }, 280);
+}
 
 const FORMAS_PAGAMENTO = ['Dinheiro', 'PIX', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto', 'Convênio'];
 
@@ -41,7 +115,7 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
     }
     setSaving(true);
     const novoPag = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       data: novoPagamento.data,
       valor: valor,
       formaPagamento: novoPagamento.formaPagamento,
@@ -66,7 +140,7 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
     if (valor <= 0) return;
     setSaving(true);
     const novoPag = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       data: new Date().toISOString().split('T')[0],
       valor,
       formaPagamento: 'PIX',
@@ -213,14 +287,26 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeletePagamento(p.id)}
-                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', transition: 'color 0.2s' }}
-                    onMouseOver={e => e.currentTarget.style.color = 'var(--error)'}
-                    onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <button
+                      onClick={() => openReceipt(buildReceiptHtml({ treatment, patient, clinicSettings, pagamento: p }))}
+                      title="Imprimir recibo"
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', transition: 'color 0.2s' }}
+                      onMouseOver={e => e.currentTarget.style.color = 'var(--accent-cyan)'}
+                      onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+                    >
+                      <Printer size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleDeletePagamento(p.id)}
+                      title="Remover pagamento"
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', transition: 'color 0.2s' }}
+                      onMouseOver={e => e.currentTarget.style.color = 'var(--error)'}
+                      onMouseOut={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

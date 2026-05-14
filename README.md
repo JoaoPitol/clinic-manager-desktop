@@ -1,3 +1,28 @@
+# Clinic Manager (Desktop)
+
+App Electron + React + Vite.
+
+## Desenvolvimento
+
+Use **sempre** um dos fluxos abaixo. Rodar só `electron:start` sem o Vite deixa a janela preta (não há nada em `http://127.0.0.1:5173`).
+
+```bash
+npm install
+npm run electron:dev
+```
+
+Isso sobe o Vite e o Electron juntos. Alternativa em dois terminais:
+
+```bash
+npm run dev
+# em outro terminal:
+npm run electron:start
+```
+
+Para abrir o DevTools do Electron ao iniciar: `set ELECTRON_OPEN_DEVTOOLS=1` (Windows CMD) ou `$env:ELECTRON_OPEN_DEVTOOLS='1'` (PowerShell) antes de `npm run electron:start`.
+
+---
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

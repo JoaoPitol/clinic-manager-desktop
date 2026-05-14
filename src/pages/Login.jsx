@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, CheckCircle, XCircle, Loader, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
+import CloudMigrationModal from '../components/CloudMigrationModal';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -94,6 +95,8 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [pendingClinicId, setPendingClinicId] = useState(null);
 
   // Estados de validação por campo
   const [cnpjStatus, setCnpjStatus] = useState({ status: 'idle', msg: '' });
@@ -231,11 +234,23 @@ const Login = () => {
         setCroStatus({ status: 'idle', msg: '' });
       } else {
         const response = await api.post('/auth/login', { username, password });
-        localStorage.setItem('@ClinicManager:token', response.data.accessToken);
+        const clinicId = response.data.accessToken;
+        localStorage.setItem('@ClinicManager:token', clinicId);
         if (response.data.clinicName) {
           localStorage.setItem('@ClinicManager:nome', response.data.clinicName);
           document.title = response.data.clinicName;
         }
+
+        // Verifica se é a primeira sincronização (lastSyncAt não existe)
+        const migrationDismissed = localStorage.getItem('@ClinicManager:migrationDone');
+        if (!migrationDismissed) {
+          setPendingClinicId(clinicId);
+          setShowMigrationModal(true);
+          // Navega para o dashboard mas com o modal por cima
+          navigate('/dashboard');
+          return;
+        }
+
         navigate('/dashboard');
       }
     } catch (err) {
@@ -375,6 +390,20 @@ const Login = () => {
           </div>
         </form>
       </div>
+
+      {showMigrationModal && (
+        <CloudMigrationModal
+          onConfirm={async () => {
+            if (pendingClinicId) {
+              await window.electronAPI?.syncNow(pendingClinicId);
+            }
+          }}
+          onDismiss={() => {
+            localStorage.setItem('@ClinicManager:migrationDone', '1');
+            setShowMigrationModal(false);
+          }}
+        />
+      )}
     </div>
   );
 };

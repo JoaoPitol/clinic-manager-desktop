@@ -6,8 +6,16 @@ const crypto = require('crypto');
 // O Electron nos dá uma pasta segura e persistente em qualquer PC (ex: AppData no Windows)
 const dataPath = path.join(app.getPath('userData'), 'clinic_database.json');
 
+function getDatabaseFilePath() {
+    return dataPath;
+}
+
 const ENCRYPTION_KEY = crypto.scryptSync('ClinicManagerMasterKey_SuperSecret!2026', 'salt', 32);
 const IV_LENGTH = 16;
+
+// Iterações PBKDF2 atuais. Hashes antigos (1000 iter, formato salt:hash) são
+// atualizados automaticamente para este valor no próximo login bem-sucedido.
+const PBKDF2_ITERATIONS = 600000;
 
 function encrypt(text) {
     const iv = crypto.randomBytes(IV_LENGTH);
@@ -29,18 +37,43 @@ function decrypt(text) {
 
 function hashPassword(password) {
     const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return [salt, hash].join(':');
+    const hash = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 64, 'sha512').toString('hex');
+    // Formato: salt:iterations:hash  (3 partes)
+    return `${salt}:${PBKDF2_ITERATIONS}:${hash}`;
 }
 
+// Retorna { ok: boolean, needsRehash: boolean }
 function verifyPassword(password, storedHash) {
-    if (!storedHash || !storedHash.includes(':')) {
-        // Fallback para senhas antigas em texto plano (migração suave)
-        return password === storedHash;
+    if (!storedHash || typeof storedHash !== 'string') return { ok: false, needsRehash: false };
+
+    const parts = storedHash.split(':');
+
+    if (parts.length === 3) {
+        // Formato atual: salt:iterations:hash
+        const [salt, iterStr, key] = parts;
+        const iterations = parseInt(iterStr, 10);
+        if (isNaN(iterations) || iterations <= 0) return { ok: false, needsRehash: false };
+        const hash = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex');
+        const keyBuf  = Buffer.from(key,  'hex');
+        const hashBuf = Buffer.from(hash, 'hex');
+        if (keyBuf.length !== hashBuf.length) return { ok: false, needsRehash: false };
+        const ok = crypto.timingSafeEqual(keyBuf, hashBuf);
+        return { ok, needsRehash: ok && iterations < PBKDF2_ITERATIONS };
     }
-    const [salt, key] = storedHash.split(':');
-    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return key === hash;
+
+    if (parts.length === 2) {
+        // Formato legado: salt:hash (1000 iterações, sem texto plano)
+        const [salt, key] = parts;
+        const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+        const keyBuf  = Buffer.from(key,  'hex');
+        const hashBuf = Buffer.from(hash, 'hex');
+        if (keyBuf.length !== hashBuf.length) return { ok: false, needsRehash: false };
+        const ok = crypto.timingSafeEqual(keyBuf, hashBuf);
+        return { ok, needsRehash: ok };
+    }
+
+    // Hashes sem formato reconhecido (ex: texto plano) são rejeitados
+    return { ok: false, needsRehash: false };
 }
 
 // Estrutura inicial do banco caso seja a primeira vez abrindo
@@ -53,26 +86,27 @@ const defaultData = {
 function readDB() {
     if (!fs.existsSync(dataPath)) {
         writeDB(defaultData);
-        return defaultData;
+        return { ...defaultData };
     }
-    try {
-        const raw = fs.readFileSync(dataPath, 'utf8');
-        if (raw.trim().startsWith('{')) {
-            // Banco antigo em texto plano (migração suave)
-            return JSON.parse(raw);
-        }
-        const decrypted = decrypt(raw);
-        return JSON.parse(decrypted);
-    } catch (e) {
-        console.error("Erro ao descriptografar banco de dados:", e);
-        return defaultData;
+    const raw = fs.readFileSync(dataPath, 'utf8');
+    if (raw.trim().startsWith('{')) {
+        // Banco antigo em texto plano (migração suave)
+        return JSON.parse(raw);
     }
+    // Se a descriptografia falhar, lança erro — o chamador deve tratar.
+    // Nunca sobrescrevemos um banco existente com dados vazios silenciosamente.
+    const decrypted = decrypt(raw);
+    return JSON.parse(decrypted);
 }
 
 function writeDB(data) {
     const jsonStr = JSON.stringify(data, null, 2);
     const encryptedStr = encrypt(jsonStr);
-    fs.writeFileSync(dataPath, encryptedStr);
+    // Escrita atômica: escreve em arquivo temporário e renomeia.
+    // Garante que uma queda de energia não corrompa o banco original.
+    const tmpPath = dataPath + '.tmp';
+    fs.writeFileSync(tmpPath, encryptedStr, { encoding: 'utf8' });
+    fs.renameSync(tmpPath, dataPath);
 }
 
 function registerClinic(data) {
@@ -82,7 +116,7 @@ function registerClinic(data) {
     }
 
     const newClinic = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         nome: data.nome,
         cnpj: data.cnpj,
         cro: data.cro,
@@ -99,16 +133,25 @@ function registerClinic(data) {
 
     db.clinics.push(newClinic);
     writeDB(db);
-    return { success: true };
+    return { success: true, clinicId: newClinic.id };
 }
 
 function loginClinic(data) {
     const db = readDB();
-    const clinic = db.clinics.find(c => c.username === data.username && verifyPassword(data.password, c.password));
-    if (clinic) {
-        return { success: true, clinicId: clinic.id, nome: clinic.nome };
+    const clinic = db.clinics.find(c => c.username === data.username);
+    if (!clinic) return { success: false, error: 'Credenciais inválidas' };
+
+    const { ok, needsRehash } = verifyPassword(data.password, clinic.password);
+    if (!ok) return { success: false, error: 'Credenciais inválidas' };
+
+    // Migração automática: atualiza hash legado para iterações atuais
+    if (needsRehash) {
+        const index = db.clinics.findIndex(c => c.id === clinic.id);
+        db.clinics[index].password = hashPassword(data.password);
+        writeDB(db);
     }
-    return { success: false, error: 'Credenciais inválidas' };
+
+    return { success: true, clinicId: clinic.id, nome: clinic.nome };
 }
 
 function getClinic(clinicId) {
@@ -126,7 +169,9 @@ function updateClinic(clinicId, data) {
     const db = readDB();
     const index = db.clinics.findIndex(c => c.id === clinicId);
     if (index !== -1) {
-        db.clinics[index] = { ...db.clinics[index], ...data };
+        // Campos sensíveis nunca são alterados por esta função
+        const { password: _p, id: _id, username: _u, ...safeData } = data;
+        db.clinics[index] = { ...db.clinics[index], ...safeData };
         writeDB(db);
         const { password, ...clinicData } = db.clinics[index];
         return { success: true, clinic: clinicData };
@@ -137,8 +182,10 @@ function updateClinic(clinicId, data) {
 function addPatient(data) {
     const db = readDB();
     const newPatient = {
-        id: Date.now().toString(),
-        ...data
+        id: crypto.randomUUID(),
+        ...data,
+        updatedAt: new Date().toISOString(),
+        pendingSync: true,
     };
     db.patients.push(newPatient);
     writeDB(db);
@@ -159,7 +206,12 @@ function updatePatient(clinicId, patientId, data) {
     const db = readDB();
     const index = db.patients.findIndex(p => p.clinicId === clinicId && p.id === patientId);
     if (index !== -1) {
-        db.patients[index] = { ...db.patients[index], ...data };
+        db.patients[index] = {
+            ...db.patients[index],
+            ...data,
+            updatedAt: new Date().toISOString(),
+            pendingSync: true,
+        };
         writeDB(db);
         return { success: true, patient: db.patients[index] };
     }
@@ -170,11 +222,20 @@ function deletePatient(clinicId, patientId) {
     const db = readDB();
     const index = db.patients.findIndex(p => p.clinicId === clinicId && p.id === patientId);
     if (index !== -1) {
-        db.patients.splice(index, 1);
-        
-        // Remove appointments of this patient too
+        // Soft-delete: marca como deletado para sincronizar com a nuvem
+        db.patients[index]._deleted = true;
+        db.patients[index].updatedAt = new Date().toISOString();
+        db.patients[index].pendingSync = true;
+
+        // Remove agendamentos do paciente também
         if (db.appointments) {
-            db.appointments = db.appointments.filter(a => !(a.clinicId === clinicId && a.patientId === patientId));
+            db.appointments = db.appointments
+                .filter(a => !(a.clinicId === clinicId && a.patientId === patientId))
+                .concat(
+                    db.appointments
+                        .filter(a => a.clinicId === clinicId && a.patientId === patientId)
+                        .map(a => ({ ...a, _deleted: true, updatedAt: new Date().toISOString(), pendingSync: true }))
+                );
         }
 
         writeDB(db);
@@ -197,10 +258,11 @@ function addAppointment(data) {
     );
 
     if (existingIndex !== -1) {
-        // Preserva o id e atualiza os demais campos
         db.appointments[existingIndex] = {
             ...db.appointments[existingIndex],
-            ...data
+            ...data,
+            updatedAt: new Date().toISOString(),
+            pendingSync: true,
         };
         writeDB(db);
         return { success: true, appointment: db.appointments[existingIndex], wasUpdated: true };
@@ -208,8 +270,10 @@ function addAppointment(data) {
     // ─────────────────────────────────────────────────────────────────────────
 
     const newAppointment = {
-        id: Date.now().toString(),
-        ...data
+        id: crypto.randomUUID(),
+        ...data,
+        updatedAt: new Date().toISOString(),
+        pendingSync: true,
     };
     db.appointments.push(newAppointment);
     writeDB(db);
@@ -228,26 +292,33 @@ function getAllAppointments(clinicId) {
     return db.appointments.filter(a => a.clinicId === clinicId);
 }
 
-function deleteAppointment(clinicId, appointmentId) {
-    const db = readDB();
-    if (!db.appointments) return { success: false, error: 'Tabela não existe' };
-    const index = db.appointments.findIndex(a => a.clinicId === clinicId && a.id === appointmentId);
-    if (index !== -1) {
-        db.appointments.splice(index, 1);
-        writeDB(db);
-        return { success: true };
-    }
-    return { success: false, error: 'Agendamento não encontrado' };
-}
-
 function updateAppointment(clinicId, appointmentId, data) {
     const db = readDB();
     if (!db.appointments) return { success: false, error: 'Tabela não existe' };
     const index = db.appointments.findIndex(a => a.clinicId === clinicId && a.id === appointmentId);
     if (index !== -1) {
-        db.appointments[index] = { ...db.appointments[index], ...data };
+        db.appointments[index] = {
+            ...db.appointments[index],
+            ...data,
+            updatedAt: new Date().toISOString(),
+            pendingSync: true,
+        };
         writeDB(db);
         return { success: true, appointment: db.appointments[index] };
+    }
+    return { success: false, error: 'Agendamento não encontrado' };
+}
+
+function deleteAppointment(clinicId, appointmentId) {
+    const db = readDB();
+    if (!db.appointments) return { success: false, error: 'Tabela não existe' };
+    const index = db.appointments.findIndex(a => a.clinicId === clinicId && a.id === appointmentId);
+    if (index !== -1) {
+        db.appointments[index]._deleted = true;
+        db.appointments[index].updatedAt = new Date().toISOString();
+        db.appointments[index].pendingSync = true;
+        writeDB(db);
+        return { success: true };
     }
     return { success: false, error: 'Agendamento não encontrado' };
 }
@@ -258,6 +329,8 @@ function markAppointmentReminderSent(clinicId, appointmentId) {
     const index = db.appointments.findIndex(a => a.clinicId === clinicId && a.id === appointmentId);
     if (index !== -1) {
         db.appointments[index].reminderSent = true;
+        db.appointments[index].updatedAt = new Date().toISOString();
+        db.appointments[index].pendingSync = true;
         writeDB(db);
         return { success: true };
     }
@@ -268,7 +341,170 @@ function getAllClinics() {
     return readDB().clinics || [];
 }
 
+// ── Despesas ──────────────────────────────────────────────────────────────────
+
+function addExpense(clinicId, data) {
+    const db = readDB();
+    if (!db.expenses) db.expenses = [];
+    const expense = {
+        id: crypto.randomUUID(),
+        clinicId,
+        data: data.data,
+        categoria: data.categoria || 'Outros',
+        descricao: data.descricao || '',
+        valor: parseFloat(data.valor) || 0,
+        criadoEm: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        pendingSync: true,
+    };
+    db.expenses.push(expense);
+    writeDB(db);
+    return { success: true, expense };
+}
+
+function getExpenses(clinicId) {
+    const db = readDB();
+    return (db.expenses || []).filter(e => e.clinicId === clinicId);
+}
+
+function deleteExpense(clinicId, expenseId) {
+    const db = readDB();
+    if (!db.expenses) return { success: false, error: 'Nenhuma despesa registrada' };
+    const idx = db.expenses.findIndex(e => e.clinicId === clinicId && e.id === expenseId);
+    if (idx === -1) return { success: false, error: 'Despesa não encontrada' };
+    db.expenses[idx]._deleted = true;
+    db.expenses[idx].updatedAt = new Date().toISOString();
+    db.expenses[idx].pendingSync = true;
+    writeDB(db);
+    return { success: true };
+}
+
+function updateExpense(clinicId, expenseId, data) {
+    const db = readDB();
+    if (!db.expenses) return { success: false, error: 'Nenhuma despesa registrada' };
+    const idx = db.expenses.findIndex(e => e.clinicId === clinicId && e.id === expenseId);
+    if (idx === -1) return { success: false, error: 'Despesa não encontrada' };
+    const { id: _id, clinicId: _cid, ...safeData } = data;
+    db.expenses[idx] = {
+        ...db.expenses[idx],
+        ...safeData,
+        updatedAt: new Date().toISOString(),
+        pendingSync: true,
+    };
+    writeDB(db);
+    return { success: true, expense: db.expenses[idx] };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function addAttachmentToPatient(clinicId, patientId, metadata) {
+    const db = readDB();
+    const index = db.patients.findIndex(p => p.clinicId === clinicId && p.id === patientId);
+    if (index === -1) return { success: false, error: 'Paciente não encontrado' };
+    if (!db.patients[index].attachments) db.patients[index].attachments = [];
+    db.patients[index].attachments.push(metadata);
+    writeDB(db);
+    return { success: true, attachment: metadata };
+}
+
+function removeAttachmentFromPatient(clinicId, patientId, attachmentId) {
+    const db = readDB();
+    const index = db.patients.findIndex(p => p.clinicId === clinicId && p.id === patientId);
+    if (index === -1) return { success: false, error: 'Paciente não encontrado' };
+    db.patients[index].attachments = (db.patients[index].attachments || []).filter(a => a.id !== attachmentId);
+    writeDB(db);
+    return { success: true };
+}
+
+// ── Sincronização com a nuvem ─────────────────────────────────────────────────
+
+/**
+ * Retorna os dados necessários para o sync: pacientes, agendamentos e despesas
+ * da clínica, incluindo pendentes. Também retorna o lastSyncAt armazenado.
+ */
+function readDBForSync(clinicId) {
+    const db = readDB();
+    return {
+        patients:     (db.patients     || []).filter(p => p.clinicId === clinicId),
+        appointments: (db.appointments || []).filter(a => a.clinicId === clinicId),
+        expenses:     (db.expenses     || []).filter(e => e.clinicId === clinicId),
+        lastSyncAt:   db.lastSyncAt || null,
+    };
+}
+
+/**
+ * Aplica o resultado de uma sincronização bem-sucedida:
+ * - Registros novos/alterados recebidos da nuvem são mesclados ("last write wins")
+ * - pendingSync é removido dos registros que foram confirmados
+ * - lastSyncAt é atualizado
+ */
+function applySyncResult(clinicId, { patients, appointments, expenses, syncedAt }) {
+    const db = readDB();
+
+    function mergeRecords(localList, remoteList, idField = 'id') {
+        const map = new Map();
+        // Indexa locais
+        for (const r of localList) map.set(r[idField], r);
+        // Mescla remotos: ganha quem tem updatedAt mais recente
+        for (const remote of remoteList) {
+            const local = map.get(remote[idField]);
+            const remoteTs = new Date(remote.updatedAt || 0).getTime();
+            const localTs  = new Date(local?.updatedAt || 0).getTime();
+            if (!local || remoteTs >= localTs) {
+                map.set(remote[idField], { ...remote, pendingSync: false });
+            }
+        }
+        // Remove pendingSync dos registros locais que agora estão confirmados
+        for (const [id, record] of map) {
+            if (!record.pendingSync) {
+                map.set(id, { ...record, pendingSync: false });
+            }
+        }
+        return Array.from(map.values());
+    }
+
+    // Aplica merge por tabela (apenas registros desta clínica)
+    const otherPatients     = (db.patients     || []).filter(p => p.clinicId !== clinicId);
+    const otherAppointments = (db.appointments || []).filter(a => a.clinicId !== clinicId);
+    const otherExpenses     = (db.expenses     || []).filter(e => e.clinicId !== clinicId);
+
+    const myPatients     = (db.patients     || []).filter(p => p.clinicId === clinicId);
+    const myAppointments = (db.appointments || []).filter(a => a.clinicId === clinicId);
+    const myExpenses     = (db.expenses     || []).filter(e => e.clinicId === clinicId);
+
+    db.patients     = [...otherPatients,     ...mergeRecords(myPatients,     patients)];
+    db.appointments = [...otherAppointments, ...mergeRecords(myAppointments, appointments)];
+    db.expenses     = [...otherExpenses,     ...mergeRecords(myExpenses,     expenses)];
+    db.lastSyncAt   = syncedAt || new Date().toISOString();
+
+    writeDB(db);
+}
+
+/**
+ * Retorna o token JWT armazenado para uma clínica (salvo após cloudLogin).
+ */
+function getCloudToken(clinicId) {
+    const db = readDB();
+    const clinic = db.clinics.find(c => c.id === clinicId);
+    return clinic?.cloudToken || null;
+}
+
+/**
+ * Armazena o token JWT da nuvem na entrada da clínica no banco local.
+ */
+function setCloudToken(clinicId, token) {
+    const db = readDB();
+    const index = db.clinics.findIndex(c => c.id === clinicId);
+    if (index !== -1) {
+        db.clinics[index].cloudToken = token;
+        writeDB(db);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 module.exports = {
+    getDatabaseFilePath,
     registerClinic,
     loginClinic,
     getClinic,
@@ -279,6 +515,16 @@ module.exports = {
     getPatient,
     updatePatient,
     deletePatient,
+    addExpense,
+    getExpenses,
+    deleteExpense,
+    updateExpense,
+    addAttachmentToPatient,
+    removeAttachmentFromPatient,
+    readDBForSync,
+    applySyncResult,
+    getCloudToken,
+    setCloudToken,
     addAppointment,
     getAppointments,
     getAllAppointments,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Palette, Building, Moon, Sun, MessageCircle, DollarSign } from 'lucide-react';
+import { ArrowLeft, Save, Palette, Building, Moon, Sun, MessageCircle, DollarSign, Cloud, ListChecks, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
 import api from '../services/api';
 
 const Settings = () => {
@@ -23,6 +23,19 @@ const Settings = () => {
   // Pagamentos PIX
   const [chavePix, setChavePix] = useState('');
   const [cidadeClinica, setCidadeClinica] = useState('');
+
+  // Tabela de Procedimentos
+  const [proceduresList, setProceduresList] = useState([]);
+  const [newProcNome, setNewProcNome] = useState('');
+  const [newProcValor, setNewProcValor] = useState('');
+  const [editingProcId, setEditingProcId] = useState(null);
+  const [editProcNome, setEditProcNome] = useState('');
+  const [editProcValor, setEditProcValor] = useState('');
+
+  const [driveStatus, setDriveStatus] = useState(null);
+  const [gClientId, setGClientId] = useState('');
+  const [gClientSecret, setGClientSecret] = useState('');
+  const [driveBusy, setDriveBusy] = useState(false);
   
   const colors = [
     { id: 'blue', name: 'Azul', hex: '#3B82F6' },
@@ -34,6 +47,9 @@ const Settings = () => {
 
   useEffect(() => {
     fetchClinicInfo();
+    if (window.electronAPI?.googleDriveStatus) {
+      window.electronAPI.googleDriveStatus().then(setDriveStatus).catch(() => setDriveStatus(null));
+    }
     
     // Cleanup ao sair da página
     return () => {
@@ -75,6 +91,7 @@ const Settings = () => {
           setChavePix(response.clinic.settings.chavePix || '');
           setCidadeClinica(response.clinic.settings.cidadeClinica || '');
         }
+        setProceduresList(response.clinic.proceduresLibrary || []);
       }
     } catch (error) {
       console.error('Erro ao buscar dados da clínica', error);
@@ -95,7 +112,8 @@ const Settings = () => {
         nome,
         cnpj,
         cro,
-        settings: newSettings
+        settings: newSettings,
+        proceduresLibrary: proceduresList,
       };
       
       const response = await window.electronAPI.updateClinic(clinicId, updatedData);
@@ -114,6 +132,38 @@ const Settings = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleAddProcedure = () => {
+    const nome = newProcNome.trim();
+    if (!nome) return;
+    const newProc = {
+      id: crypto.randomUUID(),
+      nome,
+      valorPadrao: newProcValor ? parseFloat(newProcValor) : '',
+    };
+    setProceduresList(prev => [...prev, newProc]);
+    setNewProcNome('');
+    setNewProcValor('');
+  };
+
+  const handleRemoveProcedure = (id) => {
+    setProceduresList(prev => prev.filter(p => p.id !== id));
+  };
+
+  const handleStartEditProc = (proc) => {
+    setEditingProcId(proc.id);
+    setEditProcNome(proc.nome);
+    setEditProcValor(proc.valorPadrao !== '' ? String(proc.valorPadrao) : '');
+  };
+
+  const handleConfirmEditProc = (id) => {
+    const nome = editProcNome.trim();
+    if (!nome) return;
+    setProceduresList(prev => prev.map(p =>
+      p.id === id ? { ...p, nome, valorPadrao: editProcValor ? parseFloat(editProcValor) : '' } : p
+    ));
+    setEditingProcId(null);
   };
 
   const applyThemeToDocument = (settings, saveToStorage = true) => {
@@ -291,6 +341,301 @@ const Settings = () => {
             </div>
           </div>
 
+          {/* Tabela de Procedimentos */}
+          <div className="glass-panel" style={{ padding: '32px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+              <ListChecks size={24} color="var(--accent-cyan)" />
+              <div>
+                <h2 style={{ fontSize: '1.4rem', color: 'var(--text-primary)', margin: 0 }}>Tabela de Procedimentos</h2>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Crie uma lista de procedimentos com valores padrão para usar como atalho no plano de tratamento dos pacientes.
+                </p>
+              </div>
+            </div>
+
+            {/* Formulário de adição */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '12px',
+              alignItems: 'end', marginBottom: '20px', marginTop: '20px',
+              padding: '16px', background: 'rgba(255,255,255,0.03)',
+              borderRadius: '10px', border: '1px solid var(--border-color)',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px', alignItems: 'end' }}>
+                <div>
+                  <label className="input-label" style={{ fontSize: '0.82rem' }}>Nome do Procedimento</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Ex: Extração simples, Clareamento, Restauração…"
+                    value={newProcNome}
+                    onChange={e => setNewProcNome(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddProcedure())}
+                  />
+                </div>
+                <div>
+                  <label className="input-label" style={{ fontSize: '0.82rem' }}>Valor Padrão (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="input-field"
+                    placeholder="Opcional"
+                    value={newProcValor}
+                    onChange={e => setNewProcValor(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddProcedure())}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleAddProcedure}
+                disabled={!newProcNome.trim()}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '12px 18px', whiteSpace: 'nowrap' }}
+              >
+                <Plus size={16} /> Adicionar
+              </button>
+            </div>
+
+            {/* Lista de procedimentos */}
+            {proceduresList.length === 0 ? (
+              <div style={{
+                textAlign: 'center', padding: '32px',
+                background: 'rgba(255,255,255,0.02)', borderRadius: '8px',
+                color: 'var(--text-secondary)', fontSize: '0.9rem',
+              }}>
+                Nenhum procedimento cadastrado ainda.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {proceduresList.map((proc, idx) => (
+                  <div
+                    key={proc.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '12px 16px',
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '10px',
+                    }}
+                  >
+                    <span style={{
+                      width: '24px', height: '24px', borderRadius: '50%',
+                      background: 'rgba(99,179,237,0.15)', color: 'var(--accent-cyan)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.75rem', fontWeight: 700, flexShrink: 0,
+                    }}>
+                      {idx + 1}
+                    </span>
+
+                    {editingProcId === proc.id ? (
+                      <>
+                        <input
+                          type="text"
+                          className="input-field"
+                          value={editProcNome}
+                          onChange={e => setEditProcNome(e.target.value)}
+                          style={{ flex: 2, padding: '8px 12px' }}
+                          autoFocus
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          className="input-field"
+                          value={editProcValor}
+                          onChange={e => setEditProcValor(e.target.value)}
+                          placeholder="Valor"
+                          style={{ flex: 1, padding: '8px 12px' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmEditProc(proc.id)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--success)', padding: '4px' }}
+                          title="Confirmar"
+                        >
+                          <Check size={18} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingProcId(null)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px' }}
+                          title="Cancelar"
+                        >
+                          <X size={18} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ flex: 2, fontWeight: 500, color: 'var(--text-primary)' }}>{proc.nome}</span>
+                        <span style={{
+                          flex: 1, color: proc.valorPadrao !== '' ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                          fontWeight: proc.valorPadrao !== '' ? 600 : 400,
+                        }}>
+                          {proc.valorPadrao !== '' ? `R$ ${parseFloat(proc.valorPadrao).toFixed(2)}` : '—'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditProc(proc)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--accent-cyan)', padding: '4px' }}
+                          title="Editar"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveProcedure(proc.id)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--error)', padding: '4px' }}
+                          title="Remover"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Google Drive backup */}
+          {window.electronAPI?.googleDriveStatus && (
+            <div className="glass-panel" style={{ padding: '32px', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <Cloud size={24} color="#4285F4" />
+                <div>
+                  <h2 style={{ fontSize: '1.4rem', color: 'var(--text-primary)' }}>Backup na nuvem (Google Drive)</h2>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    A cada 4 horas o app envia uma cópia do banco de dados (arquivo criptografado) para uma pasta <strong>ClinicManagerBackups</strong> na sua conta Google.
+                  </p>
+                </div>
+              </div>
+              <details
+                open
+                style={{
+                  marginBottom: '20px',
+                  padding: '14px 16px',
+                  background: 'rgba(255,255,255,0.04)',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                  Passo a passo — como conectar o backup ao Google Drive
+                </summary>
+                <ol style={{ margin: '14px 0 0 0', paddingLeft: '22px', lineHeight: 1.65, fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+                  <li style={{ marginBottom: '8px' }}>Aceda a <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-cyan)' }}>Google Cloud Console</a> com a mesma conta Google onde quer guardar os backups.</li>
+                  <li style={{ marginBottom: '8px' }}>Crie um <strong>projeto novo</strong> (canto superior) ou selecione um projeto existente.</li>
+                  <li style={{ marginBottom: '8px' }}>Menu ☰ → <strong>APIs e serviços</strong> → <strong>Biblioteca</strong> → procure <strong>Google Drive API</strong> → <strong>Ativar</strong>.</li>
+                  <li style={{ marginBottom: '8px' }}>Ainda em APIs e serviços → <strong>Tela de consentimento OAuth</strong>: escolha <strong>Externo</strong> (ou Interno se for Workspace só da organização), preencha o nome da app e guarde. Se a app estiver em modo de teste, em <strong>Utilizadores de teste</strong> adicione o seu Gmail para poder autorizar o login.</li>
+                  <li style={{ marginBottom: '8px' }}><strong>Credenciais</strong> → <strong>Criar credenciais</strong> → <strong>ID do cliente OAuth</strong> → tipo de aplicação: <strong>App para computador</strong> → dê um nome → Criar.</li>
+                  <li style={{ marginBottom: '8px' }}>Na credencial criada, em <strong>URIs de redirecionamento autorizados</strong>, clique em <strong>Adicionar URI</strong> e cole <strong>exatamente</strong> (sem espaço a mais):{' '}
+                    <code style={{ color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>{driveStatus?.redirectUri || 'http://127.0.0.1:45213/oauth2callback'}</code>
+                    {' '}→ Guardar.
+                  </li>
+                  <li style={{ marginBottom: '8px' }}>Copie o <strong>ID do cliente</strong> e o <strong>Segredo do cliente</strong> e cole nos campos abaixo → clique em <strong>Salvar credenciais OAuth</strong>.</li>
+                  <li style={{ marginBottom: '8px' }}>Clique em <strong>Conectar conta Google</strong>. Abre-se o navegador: inicie sessão, aceite as permissões do Drive. Quando aparecer a mensagem de autorização concluída, pode fechar o separador e voltar ao Clinic Manager.</li>
+                  <li>Os backups ficam na pasta <strong>ClinicManagerBackups</strong> do seu Google Drive. Use <strong>Backup agora</strong> para testar; o envio automático ocorre a cada 4 horas.</li>
+                </ol>
+              </details>
+              <div style={{ display: 'grid', gap: '12px', marginBottom: '16px' }}>
+                <div>
+                  <label className="input-label">Client ID</label>
+                  <input type="text" className="input-field" value={gClientId} onChange={(e) => setGClientId(e.target.value)} placeholder={driveStatus?.clientConfigured ? '•••• (já salvo — cole para substituir)' : 'xxx.apps.googleusercontent.com'} autoComplete="off" />
+                </div>
+                <div>
+                  <label className="input-label">Client Secret</label>
+                  <input type="password" className="input-field" value={gClientSecret} onChange={(e) => setGClientSecret(e.target.value)} placeholder="GOCSPX-..." autoComplete="off" />
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={driveBusy || !gClientId.trim() || !gClientSecret.trim()}
+                  onClick={async () => {
+                    setDriveBusy(true);
+                    try {
+                      const r = await window.electronAPI.googleDriveSaveClient({ clientId: gClientId.trim(), clientSecret: gClientSecret.trim() });
+                      if (r.success) {
+                        setGClientSecret('');
+                        alert('Credenciais salvas.');
+                        setDriveStatus(await window.electronAPI.googleDriveStatus());
+                      } else alert(r.error || 'Erro ao salvar');
+                    } finally {
+                      setDriveBusy(false);
+                    }
+                  }}
+                >
+                  Salvar credenciais OAuth
+                </button>
+              </div>
+              {driveStatus && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                  <p>Conta Google: {driveStatus.connected ? 'conectada' : 'não conectada'}</p>
+                  {driveStatus.lastBackupAt && <p>Último backup: {new Date(driveStatus.lastBackupAt).toLocaleString('pt-BR')}</p>}
+                  {driveStatus.lastBackupError && <p style={{ color: 'var(--error)' }}>Erro: {driveStatus.lastBackupError}</p>}
+                </div>
+              )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={driveBusy || !driveStatus?.clientConfigured}
+                  onClick={async () => {
+                    setDriveBusy(true);
+                    try {
+                      const r = await window.electronAPI.googleDriveConnect();
+                      if (r.success) {
+                        alert('Google Drive conectado.');
+                        setDriveStatus(await window.electronAPI.googleDriveStatus());
+                      } else alert(r.error || 'Falha na conexão');
+                    } finally {
+                      setDriveBusy(false);
+                    }
+                  }}
+                >
+                  Conectar conta Google
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={driveBusy || !driveStatus?.connected}
+                  onClick={async () => {
+                    setDriveBusy(true);
+                    try {
+                      const r = await window.electronAPI.googleDriveBackupNow();
+                      if (r.success) {
+                        alert('Backup enviado ao Drive.');
+                        setDriveStatus(await window.electronAPI.googleDriveStatus());
+                      } else alert(r.error || 'Falha no backup');
+                    } finally {
+                      setDriveBusy(false);
+                    }
+                  }}
+                >
+                  Backup agora
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ color: 'var(--error)', borderColor: 'rgba(239,68,68,0.35)' }}
+                  disabled={driveBusy || !driveStatus?.connected}
+                  onClick={async () => {
+                    if (!window.confirm('Desconectar Google Drive neste computador?')) return;
+                    setDriveBusy(true);
+                    try {
+                      await window.electronAPI.googleDriveDisconnect();
+                      setDriveStatus(await window.electronAPI.googleDriveStatus());
+                    } finally {
+                      setDriveBusy(false);
+                    }
+                  }}
+                >
+                  Desconectar
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Aparência */}
           <div className="glass-panel" style={{ padding: '32px', marginBottom: '32px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
@@ -381,7 +726,6 @@ const Settings = () => {
             </button>
           </div>
         </form>
-
       </div>
     </div>
   );
