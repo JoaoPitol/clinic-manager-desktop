@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Paperclip, Upload, Trash2, FileText, Image, File, ExternalLink, Film, Archive } from 'lucide-react';
+import { formatDateBr } from '../utils/dateBr';
 
 const MAX_SIZE_MB = 20;
 const ACCEPT = '.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.doc,.docx,.xls,.xlsx,.txt,.zip,.mp4,.mov,.avi';
@@ -21,11 +22,6 @@ function formatSize(bytes) {
   if (bytes < 1024)           return `${bytes} B`;
   if (bytes < 1024 * 1024)    return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDate(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString('pt-BR');
 }
 
 const AnexosPaciente = ({ patient, patientId, clinicId, onAttachmentsChanged }) => {
@@ -199,7 +195,7 @@ const AnexosPaciente = ({ patient, patientId, clinicId, onAttachmentsChanged }) 
                     {formatSize(att.size)}
                   </p>
                   <p style={{ margin: '1px 0 0', fontSize: '0.73rem', color: 'var(--text-secondary)', opacity: 0.7 }}>
-                    {formatDate(att.uploadedAt)}
+                    {formatDateBr(att.uploadedAt)}
                   </p>
                 </div>
               </div>

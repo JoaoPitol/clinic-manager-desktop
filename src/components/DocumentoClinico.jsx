@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Eye, Shield, X, ChevronRight, PenLine } from 'lucide-react';
 import SignaturePad from './SignaturePad';
 import api from '../services/api';
+import { formatDateBr, formatDateTimeBr } from '../utils/dateBr';
 
 const TIPOS = [
   { id: 'termo_consentimento', emoji: '📋', label: 'Termo de Consentimento', desc: 'Autorização informada para procedimentos' },
@@ -18,7 +19,7 @@ async function gerarHash(txt) {
 }
 
 function template(tipo, p, clinica) {
-  const dt = new Date().toLocaleDateString('pt-BR');
+  const dt = formatDateBr(new Date());
   const nome = p.nomeCompleto||''; const cpf = p.cpfOuCi||'';
   const end = [p.enderecoResidencial,p.cidade,p.estado].filter(Boolean).join(', ');
 
@@ -30,7 +31,7 @@ function template(tipo, p, clinica) {
 
   if (tipo==='anamnese') {
     const sim = (v) => v==='SIM'?'Sim':'Não';
-    return `ANAMNESE — FICHA DE SAÚDE\n\nPaciente: ${nome} | CPF: ${cpf}\nData Nasc.: ${p.dataNascimento?new Date(p.dataNascimento).toLocaleDateString('pt-BR',{timeZone:'UTC'}):'-'} | Sexo: ${p.sexo||'-'}\nTelefone: ${p.fone||'-'}\nEndereço: ${end}\n\nQUEIXA PRINCIPAL: ${p.queixaPrincipal||'-'}\nQUEIXA ATUAL: ${p.queixaAtual||'-'}\nHISTÓRIA PREGRESSA: ${p.historiaPregressa||'-'}\n\nQUESTIONÁRIO DE SAÚDE\nSob cuidado médico: ${sim(p.qsSobCuidadoMedico)} | Medicamentos: ${sim(p.qsTomandoMedicamentos)}\nAlérgico: ${sim(p.qsAlergico)} | Diabético: ${sim(p.qsDiabetico)}\nHipertensão: ${sim(p.qsPressaoAltaBaixa)} | Cardíaco: ${sim(p.qsEnfermidadesCardiacas)}\nHIV: ${sim(p.qsHivPositivo)} | Hepatite: ${sim(p.qsHepatite)}\nGrávida: ${sim(p.qsGravida)} | Epilepsia: ${sim(p.qsEpilepsia)}\n\nAssinado por: ${p.assinaturaNome||'-'}\nData da assinatura: ${p.assinaturaData?new Date(p.assinaturaData).toLocaleDateString('pt-BR',{timeZone:'UTC'}):'-'}`;
+    return `ANAMNESE — FICHA DE SAÚDE\n\nPaciente: ${nome} | CPF: ${cpf}\nData Nasc.: ${formatDateBr(p.dataNascimento)} | Sexo: ${p.sexo||'-'}\nTelefone: ${p.fone||'-'}\nEndereço: ${end}\n\nQUEIXA PRINCIPAL: ${p.queixaPrincipal||'-'}\nQUEIXA ATUAL: ${p.queixaAtual||'-'}\nHISTÓRIA PREGRESSA: ${p.historiaPregressa||'-'}\n\nQUESTIONÁRIO DE SAÚDE\nSob cuidado médico: ${sim(p.qsSobCuidadoMedico)} | Medicamentos: ${sim(p.qsTomandoMedicamentos)}\nAlérgico: ${sim(p.qsAlergico)} | Diabético: ${sim(p.qsDiabetico)}\nHipertensão: ${sim(p.qsPressaoAltaBaixa)} | Cardíaco: ${sim(p.qsEnfermidadesCardiacas)}\nHIV: ${sim(p.qsHivPositivo)} | Hepatite: ${sim(p.qsHepatite)}\nGrávida: ${sim(p.qsGravida)} | Epilepsia: ${sim(p.qsEpilepsia)}\n\nAssinado por: ${p.assinaturaNome||'-'}\nData da assinatura: ${formatDateBr(p.assinaturaData)}`;
   }
   return '';
 }
@@ -102,7 +103,7 @@ export default function DocumentoClinico({ patient, patientId }) {
     setDocs(updated);
   };
 
-  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pt-BR') : '-';
+  const fmtDate = (iso) => formatDateTimeBr(iso);
   const tipoLabel = (t) => TIPOS.find(x=>x.id===t)?.label || t;
 
   // ── LIST ──────────────────────────────────────────────────────────────────────

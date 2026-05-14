@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import { X, Plus, Trash2, DollarSign, CheckCircle, AlertCircle, Clock, Smartphone, FileText, Printer } from 'lucide-react';
 import PixModal from './PixModal';
 import BoletoViewer from './BoletoViewer';
+import DateInputBr from './DateInputBr';
+import { formatDateBr, todayIso } from '../utils/dateBr';
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function buildReceiptHtml({ treatment, patient, clinicSettings, pagamento }) {
-  const dataPag = pagamento.data
-    ? pagamento.data.split('-').reverse().join('/')
-    : new Date().toLocaleDateString('pt-BR');
-  const hoje = new Date().toLocaleDateString('pt-BR');
+  const dataPag = pagamento.data ? formatDateBr(pagamento.data) : formatDateBr(new Date());
+  const hoje = formatDateBr(new Date());
   const valorFmt = parseFloat(pagamento.valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
   return `<!DOCTYPE html>
@@ -97,7 +97,7 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
   const status = calcularStatusPagamento(treatment);
 
   const [novoPagamento, setNovoPagamento] = useState({
-    data: new Date().toISOString().split('T')[0],
+    data: todayIso(),
     valor: saldoDevedor > 0 ? saldoDevedor.toFixed(2) : '',
     formaPagamento: 'PIX',
     observacao: '',
@@ -141,7 +141,7 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
     setSaving(true);
     const novoPag = {
       id: crypto.randomUUID(),
-      data: new Date().toISOString().split('T')[0],
+      data: todayIso(),
       valor,
       formaPagamento: 'PIX',
       observacao: 'Confirmado via QR Code',
@@ -155,12 +155,6 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
 
   const formatCurrency = (val) =>
     parseFloat(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '-';
-    const parts = dateStr.split('T')[0].split('-');
-    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
-  };
 
   return (
     <>
@@ -283,7 +277,7 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
                     <div>
                       <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>{formatCurrency(p.valor)}</p>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                        {formatDate(p.data)} · {p.formaPagamento} {p.observacao ? `· ${p.observacao}` : ''}
+                        {formatDateBr(p.data)} · {p.formaPagamento} {p.observacao ? `· ${p.observacao}` : ''}
                       </p>
                     </div>
                   </div>
@@ -320,11 +314,11 @@ const PagamentoModal = ({ treatment, patient, clinicSettings, onClose, onSave })
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
               <div>
                 <label className="input-label" style={{ fontSize: '0.8rem' }}>Data *</label>
-                <input
-                  type="date"
+                <DateInputBr
                   className="input-field"
                   value={novoPagamento.data}
-                  onChange={e => setNovoPagamento({ ...novoPagamento, data: e.target.value })}
+                  onChange={(iso) => setNovoPagamento({ ...novoPagamento, data: iso })}
+                  required
                 />
               </div>
               <div>

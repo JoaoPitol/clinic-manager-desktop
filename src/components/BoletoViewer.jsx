@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { X, Printer, AlertTriangle } from 'lucide-react';
+import { formatDateBr } from '../utils/dateBr';
 
 // ── Interleaved 2 of 5 barcode renderer (ITF-25) ─────────────────────────────
 // Usado em boletos Febraban. Gera barras baseadas no código numérico.
@@ -68,11 +69,6 @@ const Barcode = ({ code }) => {
 // ── Formatação ────────────────────────────────────────────────────────────────
 const formatCurrency = (val) =>
   parseFloat(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-const formatDate = (d) => {
-  const date = d ? new Date(d + 'T12:00:00') : new Date();
-  return date.toLocaleDateString('pt-BR');
-};
 
 const formatBarcode = (code) =>
   code.replace(/(\d{5})(\d{5})(\d{5})(\d{6})(\d{5})(\d{6})(\d)(\d{14})/, '$1.$2 $3.$4 $5.$6 $7 $8');
@@ -150,7 +146,7 @@ const BoletoViewer = ({ treatment, patient, clinicSettings, onClose }) => {
             </div>
             <div style={{ padding: '8px 16px', minWidth: '160px' }}>
               <p style={{ fontSize: '9px', color: '#888', marginBottom: '2px' }}>Vencimento</p>
-              <strong style={{ fontSize: '14px' }}>{formatDate(vencStr)}</strong>
+              <strong style={{ fontSize: '14px' }}>{formatDateBr(vencStr)}</strong>
             </div>
           </div>
 
@@ -169,7 +165,7 @@ const BoletoViewer = ({ treatment, patient, clinicSettings, onClose }) => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', borderBottom: '1px solid #ccc' }}>
             <div style={{ padding: '8px 16px', borderRight: '1px solid #ccc' }}>
               <p style={{ fontSize: '9px', color: '#888', marginBottom: '2px' }}>Data do Documento</p>
-              <p>{formatDate(treatment.data)}</p>
+              <p>{formatDateBr(treatment.data)}</p>
             </div>
             <div style={{ padding: '8px 16px', borderRight: '1px solid #ccc' }}>
               <p style={{ fontSize: '9px', color: '#888', marginBottom: '2px' }}>Nº do Documento</p>

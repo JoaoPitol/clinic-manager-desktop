@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Plus, ChevronDown, ChevronUp, FileText, CheckCircle, Clock, Trash2, Edit2, X, DollarSign, BookOpen } from 'lucide-react';
 import api from '../services/api';
@@ -7,6 +7,9 @@ import DocumentoClinico from '../components/DocumentoClinico';
 import PagamentoModal, { calcularStatusPagamento } from '../components/PagamentoModal';
 import PlanoOrcamentoTabelas from '../components/PlanoOrcamentoTabelas';
 import AnexosPaciente from '../components/AnexosPaciente';
+import FichaEvolucao from '../components/FichaEvolucao';
+import DateInputBr from '../components/DateInputBr';
+import { formatDateBr, todayIso } from '../utils/dateBr';
 
 const PatientDetails = () => {
   const { id } = useParams();
@@ -21,10 +24,12 @@ const PatientDetails = () => {
   const [clinicSettings, setClinicSettings] = useState({});
   const [proceduresLibrary, setProceduresLibrary] = useState([]);
   const [showProcLibrary, setShowProcLibrary] = useState(false);
+  const planoTratamentoSectionRef = useRef(null);
+  const scrollPlanoTratamentoPending = useRef(false);
 
   // Tratamento Formulário
   const [novoTratamento, setNovoTratamento] = useState({
-    data: new Date().toISOString().split('T')[0],
+    data: todayIso(),
     hora: '',
     dente: '',
     procedimento: '',
@@ -38,15 +43,33 @@ const PatientDetails = () => {
   }, [id]);
 
   useEffect(() => {
-    if (location.state?.prefillTreatment) {
-      setNovoTratamento(prev => ({
+    const st = location.state;
+    if (!st) return;
+
+    const goPlano = !!(st.prefillTreatment || st.scrollToPlanoTratamento);
+    if (st.prefillTreatment) {
+      setNovoTratamento((prev) => ({
         ...prev,
-        ...location.state.prefillTreatment
+        ...st.prefillTreatment,
       }));
-      // Limpa o state do history para não repreencher ao recarregar a página
+    }
+    if (goPlano) {
+      scrollPlanoTratamentoPending.current = true;
+    }
+    if (st.prefillTreatment || st.scrollToPlanoTratamento) {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    if (loading || !patient || !scrollPlanoTratamentoPending.current) return;
+    const el = planoTratamentoSectionRef.current;
+    if (!el) return;
+    scrollPlanoTratamentoPending.current = false;
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [loading, patient]);
 
   const fetchPatient = async () => {
     try {
@@ -165,7 +188,7 @@ const PatientDetails = () => {
       setPatient({ ...patient, treatments: updatedData.treatments });
 
       setNovoTratamento({
-        data: new Date().toISOString().split('T')[0],
+        data: todayIso(),
         hora: '', dente: '', procedimento: '', valor: '', status: 'Planejado'
       });
       setEditingTreatmentId(null);
@@ -177,7 +200,7 @@ const PatientDetails = () => {
 
   const handleEditTreatment = (treatment) => {
     setNovoTratamento({
-      data: treatment.data || new Date().toISOString().split('T')[0],
+      data: treatment.data || todayIso(),
       hora: treatment.hora || '',
       dente: treatment.dente || '',
       procedimento: treatment.procedimento || '',
@@ -242,15 +265,6 @@ const PatientDetails = () => {
     }
   };
 
-  const formatDataBr = (dateStr) => {
-    if (!dateStr) return '-';
-    const parts = dateStr.split('T')[0].split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    }
-    return dateStr;
-  };
-
   if (loading) return <div style={{ color: 'white', padding: '40px', textAlign: 'center' }}>Carregando dados do paciente...</div>;
   if (!patient) return <div style={{ color: 'white', padding: '40px', textAlign: 'center' }}>Paciente não encontrado.</div>;
 
@@ -310,7 +324,7 @@ const PatientDetails = () => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px', marginBottom: '24px', fontSize: '0.95rem' }}>
                 <p><strong style={{ color: 'var(--text-secondary)' }}>Nome:</strong> {patient.nomeCompleto}</p>
                 <p><strong style={{ color: 'var(--text-secondary)' }}>CPF/RG:</strong> {patient.cpfOuCi}</p>
-                <p><strong style={{ color: 'var(--text-secondary)' }}>Data Nasc.:</strong> {patient.dataNascimento ? new Date(patient.dataNascimento).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}</p>
+                <p><strong style={{ color: 'var(--text-secondary)' }}>Data Nasc.:</strong> {formatDateBr(patient.dataNascimento)}</p>
                 <p><strong style={{ color: 'var(--text-secondary)' }}>Sexo:</strong> {patient.sexo || '-'}</p>
                 <p><strong style={{ color: 'var(--text-secondary)' }}>Estado Civil:</strong> {patient.estadoCivil || '-'}</p>
                 <p><strong style={{ color: 'var(--text-secondary)' }}>Profissão:</strong> {patient.profissao || '-'}</p>
@@ -372,7 +386,7 @@ const PatientDetails = () => {
                 <p style={{ gridColumn: '1 / -1' }}><strong style={{ color: 'var(--text-secondary)' }}>Falar Confidencialmente:</strong> <span style={{ color: patient.qsFalarConfidencialmente === 'SIM' ? 'var(--error)' : 'inherit' }}>{patient.qsFalarConfidencialmente || 'NÃO'}</span></p>
 
                 <p style={{ gridColumn: '1 / -1', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                  <strong style={{ color: 'var(--text-secondary)' }}>Termo de Veracidade:</strong> Assinado por <strong>{patient.assinaturaNome}</strong> em {patient.assinaturaData ? new Date(patient.assinaturaData).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}
+                  <strong style={{ color: 'var(--text-secondary)' }}>Termo de Veracidade:</strong> Assinado por <strong>{patient.assinaturaNome}</strong> em {formatDateBr(patient.assinaturaData)}
                 </p>
               </div>
             </div>
@@ -406,6 +420,12 @@ const PatientDetails = () => {
         {/* Documentos e Assinaturas */}
         <DocumentoClinico patient={patient} patientId={id} />
 
+        <FichaEvolucao
+          patientId={id}
+          rows={patient.fichaEvolucao || []}
+          onRowsUpdated={(next) => setPatient((p) => (p ? { ...p, fichaEvolucao: next } : p))}
+        />
+
         {/* Anexos */}
         <AnexosPaciente
           patient={patient}
@@ -417,7 +437,12 @@ const PatientDetails = () => {
         />
 
         {/* Plano de Tratamento */}
-        <div className="glass-panel" style={{ padding: '32px' }}>
+        <div
+          id="secao-plano-tratamento"
+          ref={planoTratamentoSectionRef}
+          className="glass-panel"
+          style={{ padding: '32px', scrollMarginTop: '24px' }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
             <h2 style={{ fontSize: '1.5rem' }}>Plano de Tratamento</h2>
             <div style={{ display: 'flex', gap: '12px', fontSize: '0.9rem', flexWrap: 'wrap' }}>
@@ -457,7 +482,7 @@ const PatientDetails = () => {
                     const pgStatus = calcularStatusPagamento(t);
                     return (
                     <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <td style={{ padding: '12px' }}>{formatDataBr(t.data)}</td>
+                      <td style={{ padding: '12px' }}>{formatDateBr(t.data)}</td>
                       <td style={{ padding: '12px' }}>{t.dente || '-'}</td>
                       <td style={{ padding: '12px', fontWeight: 500 }}>{t.procedimento}</td>
                       <td style={{ padding: '12px' }}>R$ {parseFloat(t.valor).toFixed(2)}</td>
@@ -587,10 +612,15 @@ const PatientDetails = () => {
               </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px,1fr) minmax(100px,1fr) minmax(90px,1fr) 2fr minmax(100px,1fr) minmax(110px,1fr) auto', gap: '12px', alignItems: 'end' }}>
               <div>
                 <label className="input-label" style={{ fontSize: '0.8rem' }}>Data</label>
-                <input type="date" className="input-field" value={novoTratamento.data} onChange={e => setNovoTratamento({ ...novoTratamento, data: e.target.value })} required />
+                <DateInputBr
+                  className="input-field"
+                  value={novoTratamento.data}
+                  onChange={(iso) => setNovoTratamento({ ...novoTratamento, data: iso })}
+                  required
+                />
               </div>
               <div>
                 <label className="input-label" style={{ fontSize: '0.8rem' }}>Hora</label>
@@ -635,7 +665,7 @@ const PatientDetails = () => {
                   <button type="button" className="btn-secondary" onClick={() => {
                     setEditingTreatmentId(null);
                     setNovoTratamento({
-                      data: new Date().toISOString().split('T')[0],
+                      data: todayIso(),
                       hora: '', dente: '', procedimento: '', valor: '', status: 'Planejado'
                     });
                   }} style={{ padding: '12px' }} title="Cancelar Edição">

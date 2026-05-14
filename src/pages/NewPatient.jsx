@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import DateInputBr from '../components/DateInputBr';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 import api from '../services/api';
@@ -156,8 +157,12 @@ const NewPatient = () => {
               <input type="text" name="cpfOuCi" className="input-field" required value={formData.cpfOuCi} onChange={handleChange} />
             </div>
             <div>
-              <label className="input-label">Data de Nascimento</label>
-              <input type="date" name="dataNascimento" className="input-field" value={formData.dataNascimento} onChange={handleChange} />
+              <label className="input-label">Data de Nascimento (DD/MM/AAAA)</label>
+              <DateInputBr
+                className="input-field"
+                value={formData.dataNascimento}
+                onChange={(iso) => setFormData({ ...formData, dataNascimento: iso })}
+              />
             </div>
             <div>
               <label className="input-label">Telefone / Celular</label>
@@ -404,8 +409,13 @@ const NewPatient = () => {
                 <input type="text" name="assinaturaNome" className="input-field" placeholder="Nome do Paciente ou Responsável" value={formData.assinaturaNome} onChange={handleChange} required={formData.assinaturaConcorda} />
               </div>
               <div>
-                <label className="input-label">Data</label>
-                <input type="date" name="assinaturaData" className="input-field" value={formData.assinaturaData} onChange={handleChange} required={formData.assinaturaConcorda} />
+                <label className="input-label">Data (DD/MM/AAAA)</label>
+                <DateInputBr
+                  className="input-field"
+                  value={formData.assinaturaData}
+                  onChange={(iso) => setFormData({ ...formData, assinaturaData: iso })}
+                  required={formData.assinaturaConcorda}
+                />
               </div>
             </div>
           </div>

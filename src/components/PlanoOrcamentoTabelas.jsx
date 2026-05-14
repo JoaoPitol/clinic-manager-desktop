@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { ClipboardList, Plus, Trash2, Printer, ChevronDown, Copy, BookOpen, ChevronUp } from 'lucide-react';
+import { formatDateBr } from '../utils/dateBr';
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -35,7 +36,7 @@ function formatMoney(n) {
 }
 
 function buildPrintHtml({ clinicNome, patientNome, tabelas }) {
-  const hoje = new Date().toLocaleDateString('pt-BR');
+  const hoje = formatDateBr(new Date());
   let blocks = '';
   tabelas.forEach((t) => {
     const subtotal = (t.rows || []).reduce((s, r) => s + parseValor(r.valor), 0);

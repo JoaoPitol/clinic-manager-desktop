@@ -7,16 +7,12 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { calcularStatusPagamento } from '../components/PagamentoModal';
+import { formatDateBr, todayIso } from '../utils/dateBr';
+import { DateInputBr, MesAnoInputBr } from '../components/DateInputBr';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const formatCurrency = (val) =>
   parseFloat(val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return '-';
-  const parts = dateStr.split('T')[0].split('-');
-  return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dateStr;
-};
 
 const FORMAS = ['Todas', 'Dinheiro', 'PIX', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto', 'Convênio'];
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -166,7 +162,7 @@ const Financeiro = () => {
   // expense form
   const [novaCategoria, setNovaCategoria] = useState(EXPENSE_CATS[0]);
   const [novaDescricao, setNovaDescricao] = useState('');
-  const [novaDataExp, setNovaDataExp] = useState(new Date().toISOString().split('T')[0]);
+  const [novaDataExp, setNovaDataExp] = useState(todayIso());
   const [novoValorExp, setNovoValorExp] = useState('');
   const [savingExpense, setSavingExpense] = useState(false);
   const [expSearchQuery, setExpSearchQuery] = useState('');
@@ -359,7 +355,7 @@ const Financeiro = () => {
     const rows = [...filteredPayments]
       .sort((a, b) => (b.data || '').localeCompare(a.data || ''))
       .map(p => [
-        formatDate(p.data),
+        formatDateBr(p.data),
         p.patientName || '',
         p.procedimento || '',
         p.dente || '',
@@ -385,7 +381,7 @@ const Financeiro = () => {
   const exportExpensesCSV = () => {
     const headers = ['Data', 'Categoria', 'Descrição', 'Valor'];
     const rows = filteredExpenses.map(e => [
-      formatDate(e.data),
+        formatDateBr(e.data),
       e.categoria || '',
       e.descricao || '',
       parseFloat(e.valor || 0).toFixed(2).replace('.', ','),
@@ -422,7 +418,7 @@ const Financeiro = () => {
         setExpenses(prev => [...prev, result.expense]);
         setNovaDescricao('');
         setNovoValorExp('');
-        setNovaDataExp(new Date().toISOString().split('T')[0]);
+        setNovaDataExp(todayIso());
       }
     } catch (err) {
       console.error('Erro ao adicionar despesa', err);
@@ -551,8 +547,14 @@ const Financeiro = () => {
               <div className="glass-panel" style={{ padding: '20px', marginBottom: '24px' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}>
                   <div>
-                    <label className="input-label" style={{ fontSize: '0.78rem' }}>Mês</label>
-                    <input type="month" className="input-field" value={filtroMes} onChange={e => setFiltroMes(e.target.value)} style={{ width: '160px' }} />
+                    <label className="input-label" style={{ fontSize: '0.78rem' }}>Mês (MM/AAAA)</label>
+                    <MesAnoInputBr
+                      className="input-field"
+                      value={filtroMes}
+                      onChange={setFiltroMes}
+                      style={{ width: '160px' }}
+                      aria-label="Filtrar por mês e ano"
+                    />
                   </div>
                   <div>
                     <label className="input-label" style={{ fontSize: '0.78rem' }}>Forma de Pagamento</label>
@@ -718,7 +720,7 @@ const Financeiro = () => {
                                   onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                                   onMouseOut={e => e.currentTarget.style.background = 'transparent'}
                                 >
-                                  <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{formatDate(p.data)}</td>
+                                  <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{formatDateBr(p.data)}</td>
                                   <td style={{ padding: '10px 12px', fontWeight: 500 }}>
                                     <span style={{ color: 'var(--accent-cyan)', cursor: 'pointer' }} onClick={() => navigate(`/patient/${p.patientId}`)}>{p.patientName}</span>
                                   </td>
@@ -754,7 +756,7 @@ const Financeiro = () => {
                   {/* Add expense form */}
                   <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ fontSize: '1rem', marginBottom: '18px' }}>Registrar Despesa</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 160px auto', gap: '12px', alignItems: 'flex-end' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr minmax(140px,1fr) 160px auto', gap: '12px', alignItems: 'flex-end' }}>
                       <div>
                         <label className="input-label" style={{ fontSize: '0.78rem' }}>Categoria</label>
                         <select className="input-field" value={novaCategoria} onChange={e => setNovaCategoria(e.target.value)}>
@@ -766,8 +768,8 @@ const Financeiro = () => {
                         <input className="input-field" type="text" placeholder="Ex: Resina composta A1" value={novaDescricao} onChange={e => setNovaDescricao(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddExpense()} />
                       </div>
                       <div>
-                        <label className="input-label" style={{ fontSize: '0.78rem' }}>Data</label>
-                        <input className="input-field" type="date" value={novaDataExp} onChange={e => setNovaDataExp(e.target.value)} />
+                        <label className="input-label" style={{ fontSize: '0.78rem' }}>Data (DD/MM/AAAA)</label>
+                        <DateInputBr className="input-field" value={novaDataExp} onChange={setNovaDataExp} />
                       </div>
                       <div>
                         <label className="input-label" style={{ fontSize: '0.78rem' }}>Valor (R$)</label>
@@ -841,7 +843,12 @@ const Financeiro = () => {
                                 {editingExpense?.id === e.id ? (
                                   <>
                                     <td style={{ padding: '8px 12px' }}>
-                                      <input type="date" className="input-field" style={{ padding: '4px 8px', fontSize: '0.82rem' }} value={editingExpense.data || ''} onChange={ev => setEditingExpense(p => ({ ...p, data: ev.target.value }))} />
+                                      <DateInputBr
+                                        className="input-field"
+                                        style={{ padding: '4px 8px', fontSize: '0.82rem' }}
+                                        value={editingExpense.data || ''}
+                                        onChange={(iso) => setEditingExpense((p) => ({ ...p, data: iso }))}
+                                      />
                                     </td>
                                     <td style={{ padding: '8px 12px' }}>
                                       <select className="input-field" style={{ padding: '4px 8px', fontSize: '0.82rem' }} value={editingExpense.categoria || ''} onChange={ev => setEditingExpense(p => ({ ...p, categoria: ev.target.value }))}>
@@ -863,7 +870,7 @@ const Financeiro = () => {
                                   </>
                                 ) : (
                                   <>
-                                    <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{formatDate(e.data)}</td>
+                                    <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{formatDateBr(e.data)}</td>
                                     <td style={{ padding: '10px 12px' }}>
                                       <span style={{ background: `${CAT_COLOR[e.categoria] || '#94A3B8'}22`, color: CAT_COLOR[e.categoria] || '#94A3B8', border: `1px solid ${CAT_COLOR[e.categoria] || '#94A3B8'}44`, padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem' }}>
                                         {e.categoria}

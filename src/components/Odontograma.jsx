@@ -352,8 +352,14 @@ export default function Odontograma({ initialData = {}, patientId, onDentesSelec
 
       <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* Chart area */}
-        <div style={{ flex: 1, minWidth: 0, overflowX: 'auto' }}>
-          <div style={{ minWidth: '620px' }}>
+        <div style={{ flex: 1, minWidth: 0, overflowX: 'auto', overflowY: 'visible', padding: '0 8px 8px' }}>
+          <div
+            style={{
+              width: 'max-content',
+              minWidth: '100%',
+              margin: '0 auto',
+            }}
+          >
             {/* Quadrant labels */}
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '4px' }}>
               <span style={{ fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '.05em', textTransform: 'uppercase' }}>

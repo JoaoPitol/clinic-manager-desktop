@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, LogOut, Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Trash2, X, ArrowLeft, FilePlus, Settings, MessageCircle, DollarSign, CheckCircle, Pencil } from 'lucide-react';
 import api from '../services/api';
+import { formatDateBr } from '../utils/dateBr';
 
 const Schedule = () => {
   // Navigation states
@@ -325,6 +326,7 @@ const Schedule = () => {
   const handleCreateTreatment = (appointment) => {
     navigate(`/patient/${appointment.patientId}`, {
       state: {
+        scrollToPlanoTratamento: true,
         prefillTreatment: {
           appointmentId: appointment.id,
           data: appointment.date,
@@ -354,7 +356,13 @@ const Schedule = () => {
   };
   
   const formatDateTitle = (date) => {
-    return new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const iso = `${y}-${m}-${d}`;
+    const wd = new Intl.DateTimeFormat('pt-BR', { weekday: 'long' }).format(date);
+    const cap = wd.charAt(0).toUpperCase() + wd.slice(1);
+    return `${cap} — ${formatDateBr(iso)}`;
   };
   const renderAppointmentCard = (appointment) => {
     const isConcluido = completedAppointmentIds.has(String(appointment.id));
@@ -403,7 +411,7 @@ const Schedule = () => {
                   <FilePlus size={18} />
                 </button>
               ) : (
-                <button onClick={() => navigate(`/patient/${appointment.patientId}`)}
+                <button onClick={() => navigate(`/patient/${appointment.patientId}`, { state: { scrollToPlanoTratamento: true } })}
                   style={{ background: 'transparent', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', padding: '8px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
                   title="Ver/Editar Plano de Tratamento na Ficha do Paciente">
                   <Pencil size={18} />

@@ -4,7 +4,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { autoUpdater } = require('electron-updater');
 const db = require('./database.cjs');
-const driveBackup = require('./googleDriveBackup.cjs');
 const cloudSync = require('./cloudSync.cjs');
 
 // Auto-updater: só verifica em produção
@@ -681,21 +680,6 @@ app.on('ready', () => {
     autoUpdater.quitAndInstall(false, true);
   });
   // ────────────────────────────────────────────────────────────────────────────
-
-  ipcMain.handle('google-drive-status', () => driveBackup.getStatus());
-  ipcMain.handle('google-drive-save-client', (event, data) => {
-    try {
-      driveBackup.saveClientConfig(data);
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
-  });
-  ipcMain.handle('google-drive-connect', () => driveBackup.connectGoogleDrive());
-  ipcMain.handle('google-drive-disconnect', () => driveBackup.disconnect());
-  ipcMain.handle('google-drive-backup-now', () => driveBackup.uploadBackupNow(db));
-
-  driveBackup.startBackupScheduler(db);
 
   createWindow();
 });

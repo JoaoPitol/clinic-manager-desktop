@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Palette, Building, Moon, Sun, MessageCircle, DollarSign, Cloud, ListChecks, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
+import { ArrowLeft, Save, Palette, Building, Moon, Sun, MessageCircle, DollarSign, ListChecks, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -31,11 +31,6 @@ const Settings = () => {
   const [editProcNome, setEditProcNome] = useState('');
   const [editProcValor, setEditProcValor] = useState('');
 
-  const [driveStatus, setDriveStatus] = useState(null);
-  const [gClientId, setGClientId] = useState('');
-  const [gClientSecret, setGClientSecret] = useState('');
-  const [driveBusy, setDriveBusy] = useState(false);
-  
   const colors = [
     { id: 'blue', name: 'Azul', hex: '#3B82F6' },
     { id: 'green', name: 'Verde', hex: '#10B981' },
@@ -46,10 +41,7 @@ const Settings = () => {
 
   useEffect(() => {
     fetchClinicInfo();
-    if (window.electronAPI?.googleDriveStatus) {
-      window.electronAPI.googleDriveStatus().then(setDriveStatus).catch(() => setDriveStatus(null));
-    }
-    
+
     // Cleanup ao sair da página
     return () => {
       const savedTheme = localStorage.getItem('@ClinicManager:theme');
@@ -498,144 +490,6 @@ const Settings = () => {
               </div>
             )}
           </div>
-
-          {/* Google Drive backup */}
-          {window.electronAPI?.googleDriveStatus && (
-            <div className="glass-panel" style={{ padding: '32px', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                <Cloud size={24} color="#4285F4" />
-                <div>
-                  <h2 style={{ fontSize: '1.4rem', color: 'var(--text-primary)' }}>Backup na nuvem (Google Drive)</h2>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    A cada 4 horas o app envia uma cópia do banco de dados (arquivo criptografado) para uma pasta <strong>ClinicManagerBackups</strong> na sua conta Google.
-                  </p>
-                </div>
-              </div>
-              <details
-                open
-                style={{
-                  marginBottom: '20px',
-                  padding: '14px 16px',
-                  background: 'rgba(255,255,255,0.04)',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border-color)',
-                }}
-              >
-                <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
-                  Passo a passo — como conectar o backup ao Google Drive
-                </summary>
-                <ol style={{ margin: '14px 0 0 0', paddingLeft: '22px', lineHeight: 1.65, fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
-                  <li style={{ marginBottom: '8px' }}>Aceda a <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-cyan)' }}>Google Cloud Console</a> com a mesma conta Google onde quer guardar os backups.</li>
-                  <li style={{ marginBottom: '8px' }}>Crie um <strong>projeto novo</strong> (canto superior) ou selecione um projeto existente.</li>
-                  <li style={{ marginBottom: '8px' }}>Menu ☰ → <strong>APIs e serviços</strong> → <strong>Biblioteca</strong> → procure <strong>Google Drive API</strong> → <strong>Ativar</strong>.</li>
-                  <li style={{ marginBottom: '8px' }}>Ainda em APIs e serviços → <strong>Tela de consentimento OAuth</strong>: escolha <strong>Externo</strong> (ou Interno se for Workspace só da organização), preencha o nome da app e guarde. Se a app estiver em modo de teste, em <strong>Utilizadores de teste</strong> adicione o seu Gmail para poder autorizar o login.</li>
-                  <li style={{ marginBottom: '8px' }}><strong>Credenciais</strong> → <strong>Criar credenciais</strong> → <strong>ID do cliente OAuth</strong> → tipo de aplicação: <strong>App para computador</strong> → dê um nome → Criar.</li>
-                  <li style={{ marginBottom: '8px' }}>Na credencial criada, em <strong>URIs de redirecionamento autorizados</strong>, clique em <strong>Adicionar URI</strong> e cole <strong>exatamente</strong> (sem espaço a mais):{' '}
-                    <code style={{ color: 'var(--accent-cyan)', wordBreak: 'break-all' }}>{driveStatus?.redirectUri || 'http://127.0.0.1:45213/oauth2callback'}</code>
-                    {' '}→ Guardar.
-                  </li>
-                  <li style={{ marginBottom: '8px' }}>Copie o <strong>ID do cliente</strong> e o <strong>Segredo do cliente</strong> e cole nos campos abaixo → clique em <strong>Salvar credenciais OAuth</strong>.</li>
-                  <li style={{ marginBottom: '8px' }}>Clique em <strong>Conectar conta Google</strong>. Abre-se o navegador: inicie sessão, aceite as permissões do Drive. Quando aparecer a mensagem de autorização concluída, pode fechar o separador e voltar ao Clinic Manager.</li>
-                  <li>Os backups ficam na pasta <strong>ClinicManagerBackups</strong> do seu Google Drive. Use <strong>Backup agora</strong> para testar; o envio automático ocorre a cada 4 horas.</li>
-                </ol>
-              </details>
-              <div style={{ display: 'grid', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label className="input-label">Client ID</label>
-                  <input type="text" className="input-field" value={gClientId} onChange={(e) => setGClientId(e.target.value)} placeholder={driveStatus?.clientConfigured ? '•••• (já salvo — cole para substituir)' : 'xxx.apps.googleusercontent.com'} autoComplete="off" />
-                </div>
-                <div>
-                  <label className="input-label">Client Secret</label>
-                  <input type="password" className="input-field" value={gClientSecret} onChange={(e) => setGClientSecret(e.target.value)} placeholder="GOCSPX-..." autoComplete="off" />
-                </div>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={driveBusy || !gClientId.trim() || !gClientSecret.trim()}
-                  onClick={async () => {
-                    setDriveBusy(true);
-                    try {
-                      const r = await window.electronAPI.googleDriveSaveClient({ clientId: gClientId.trim(), clientSecret: gClientSecret.trim() });
-                      if (r.success) {
-                        setGClientSecret('');
-                        alert('Credenciais salvas.');
-                        setDriveStatus(await window.electronAPI.googleDriveStatus());
-                      } else alert(r.error || 'Erro ao salvar');
-                    } finally {
-                      setDriveBusy(false);
-                    }
-                  }}
-                >
-                  Salvar credenciais OAuth
-                </button>
-              </div>
-              {driveStatus && (
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                  <p>Conta Google: {driveStatus.connected ? 'conectada' : 'não conectada'}</p>
-                  {driveStatus.lastBackupAt && <p>Último backup: {new Date(driveStatus.lastBackupAt).toLocaleString('pt-BR')}</p>}
-                  {driveStatus.lastBackupError && <p style={{ color: 'var(--error)' }}>Erro: {driveStatus.lastBackupError}</p>}
-                </div>
-              )}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={driveBusy || !driveStatus?.clientConfigured}
-                  onClick={async () => {
-                    setDriveBusy(true);
-                    try {
-                      const r = await window.electronAPI.googleDriveConnect();
-                      if (r.success) {
-                        alert('Google Drive conectado.');
-                        setDriveStatus(await window.electronAPI.googleDriveStatus());
-                      } else alert(r.error || 'Falha na conexão');
-                    } finally {
-                      setDriveBusy(false);
-                    }
-                  }}
-                >
-                  Conectar conta Google
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={driveBusy || !driveStatus?.connected}
-                  onClick={async () => {
-                    setDriveBusy(true);
-                    try {
-                      const r = await window.electronAPI.googleDriveBackupNow();
-                      if (r.success) {
-                        alert('Backup enviado ao Drive.');
-                        setDriveStatus(await window.electronAPI.googleDriveStatus());
-                      } else alert(r.error || 'Falha no backup');
-                    } finally {
-                      setDriveBusy(false);
-                    }
-                  }}
-                >
-                  Backup agora
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ color: 'var(--error)', borderColor: 'rgba(239,68,68,0.35)' }}
-                  disabled={driveBusy || !driveStatus?.connected}
-                  onClick={async () => {
-                    if (!window.confirm('Desconectar Google Drive neste computador?')) return;
-                    setDriveBusy(true);
-                    try {
-                      await window.electronAPI.googleDriveDisconnect();
-                      setDriveStatus(await window.electronAPI.googleDriveStatus());
-                    } finally {
-                      setDriveBusy(false);
-                    }
-                  }}
-                >
-                  Desconectar
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Aparência */}
           <div className="glass-panel" style={{ padding: '32px', marginBottom: '32px' }}>

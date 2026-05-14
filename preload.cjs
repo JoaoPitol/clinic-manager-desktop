@@ -62,10 +62,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeAllListeners('update-downloaded');
   },
   // ────────────────────────────────────────────────────────────────────────────
-
-  googleDriveStatus: () => ipcRenderer.invoke('google-drive-status'),
-  googleDriveSaveClient: (data) => ipcRenderer.invoke('google-drive-save-client', data),
-  googleDriveConnect: () => ipcRenderer.invoke('google-drive-connect'),
-  googleDriveDisconnect: () => ipcRenderer.invoke('google-drive-disconnect'),
-  googleDriveBackupNow: () => ipcRenderer.invoke('google-drive-backup-now'),
 });
