@@ -485,6 +485,14 @@ function readDBForSync(clinicId) {
     };
 }
 
+/** `pendingSync !== false` — inclui legados sem campo; exclui já confirmados na nuvem. */
+function hasPendingSyncForClinic(clinicId) {
+    const db = readDB();
+    const pending = (list) =>
+        (list || []).some((r) => r.clinicId === clinicId && r.pendingSync !== false);
+    return pending(db.patients) || pending(db.appointments) || pending(db.expenses);
+}
+
 /**
  * Aplica o resultado de uma sincronização bem-sucedida:
  * - Registros novos/alterados recebidos da nuvem são mesclados ("last write wins")
@@ -578,6 +586,7 @@ module.exports = {
     addAttachmentToPatient,
     removeAttachmentFromPatient,
     readDBForSync,
+    hasPendingSyncForClinic,
     applySyncResult,
     getCloudToken,
     setCloudToken,

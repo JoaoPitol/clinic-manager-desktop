@@ -30,8 +30,30 @@ function rememberCloudEncryptionPairs(clinicId, password, username) {
   else cloudEncryptionKeysLegacy.delete(clinicId);
 }
 
-// Intervalo de sync periódico (5 minutos)
+// Sync periódico na nuvem: avaliação local a cada TICK; HTTP só se houver pendentes ou pull "velho"
+// (reduz pedidos ao Railway). Variáveis de ambiente opcionais, em ms.
+const PERIODIC_SYNC_TICK_MS =
+  Number.parseInt(process.env.CLINIC_SYNC_TICK_MS || '', 10) || 60 * 60 * 1000;
+const IDLE_CLOUD_PULL_STALE_MS =
+  Number.parseInt(process.env.CLINIC_IDLE_PULL_STALE_MS || '', 10) || 120 * 60 * 1000;
+
+/** clinicId → último sync com sucesso nesta sessão (para espaçar pulls quando não há alterações locais) */
+const lastCloudSyncSuccessAt = new Map();
+
 let syncInterval = null;
+
+function bumpLastSuccessfulCloudSync(clinicId, result) {
+  if (result && result.synced === true) {
+    lastCloudSyncSuccessAt.set(clinicId, Date.now());
+  }
+}
+
+function shouldAttemptPeriodicCloudSync(clinicId) {
+  if (db.hasPendingSyncForClinic(clinicId)) return true;
+  const last = lastCloudSyncSuccessAt.get(clinicId);
+  if (last == null) return true;
+  return Date.now() - last >= IDLE_CLOUD_PULL_STALE_MS;
+}
 
 function validateSession(sessionToken, clinicId) {
   if (!sessionToken || !clinicId) return false;
@@ -118,6 +140,8 @@ async function syncClinicInBackground(clinicId, { notifyRenderer = true } = {}) 
     reason: 'erro',
     cloudAuth: true,
   }));
+
+  bumpLastSuccessfulCloudSync(clinicId, result);
 
   if (notifyRenderer && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('sync-status', {
@@ -239,13 +263,16 @@ function createWindow() {
   }
   // ────────────────────────────────────────────────────────────────────────────
 
-  // Sync periódico a cada 5 minutos para todas as sessões ativas
+  // Sync periódico: tick frequente só em memória; HTTP à nuvem só quando necessário (ver shouldAttemptPeriodicCloudSync)
   if (syncInterval) clearInterval(syncInterval);
   syncInterval = setInterval(async () => {
-    for (const [sessionToken, clinicId] of activeSessions) {
+    for (const [, clinicId] of activeSessions) {
+      const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
+      if (!token) continue;
+      if (!shouldAttemptPeriodicCloudSync(clinicId)) continue;
       await syncClinicInBackground(clinicId);
     }
-  }, 5 * 60 * 1000);
+  }, PERIODIC_SYNC_TICK_MS);
 }
 
 app.on('ready', () => {
@@ -344,6 +371,7 @@ app.on('ready', () => {
               const encLegacy = cloudEncryptionKeysLegacy.get(result.clinicId) || null;
               // Puxa todos os dados da nuvem (decriptados automaticamente)
               const syncResult = await cloudSync.syncClinic(db, result.clinicId, cloudResult.token, encKey, encLegacy);
+              bumpLastSuccessfulCloudSync(result.clinicId, syncResult);
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('sync-status', {
                   synced: syncResult.synced,
@@ -407,6 +435,7 @@ app.on('ready', () => {
           const encKey = cloudEncryptionKeys.get(result.clinicId) || null;
           const encLegacy = cloudEncryptionKeysLegacy.get(result.clinicId) || null;
           const syncResult = await cloudSync.syncClinic(db, result.clinicId, final.token, encKey, encLegacy);
+          bumpLastSuccessfulCloudSync(result.clinicId, syncResult);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('sync-status', {
               synced: syncResult.synced,
@@ -453,6 +482,7 @@ app.on('ready', () => {
       cloudTokens.delete(clinicId);
       cloudEncryptionKeys.delete(clinicId); // remover chave da memória ao deslogar
       cloudEncryptionKeysLegacy.delete(clinicId);
+      lastCloudSyncSuccessAt.delete(clinicId);
     }
     activeSessions.delete(sessionToken);
     return { success: true };
@@ -466,6 +496,7 @@ app.on('ready', () => {
     const encKey = cloudEncryptionKeys.get(clinicId) || null;
     const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
     const result = await cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy);
+    bumpLastSuccessfulCloudSync(clinicId, result);
     const hint =
       result.online === false
         ? 'offline'

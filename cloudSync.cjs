@@ -374,7 +374,7 @@ async function cloudRegister(clinicData, password) {
 async function syncClinic(db, clinicId, token, encryptionKey = null, encryptionKeyLegacy = null) {
   if (!token) return { synced: false, reason: 'sem-token', online: false, cloudAuth: false };
 
-  if (!await isOnline()) return { synced: false, reason: 'offline', online: false, cloudAuth: true };
+  // Não chamamos GET /health antes do POST: um único pedido por ciclo de sync reduz custo no Railway.
 
   try {
     const localDB = db.readDBForSync(clinicId);
@@ -435,8 +435,11 @@ async function syncClinic(db, clinicId, token, encryptionKey = null, encryptionK
     console.log(`[cloudSync] Sync OK @ ${remote.syncedAt}${encryptionKey ? ' (encriptado)' : ''}`);
     return { synced: true, online: true, cloudAuth: true };
   } catch (err) {
-    console.error('[cloudSync] Erro na sincronização:', err.message);
-    return { synced: false, reason: err.message, online: true, cloudAuth: true };
+    const msg = err && err.message ? String(err.message) : String(err);
+    console.error('[cloudSync] Erro na sincronização:', msg);
+    const unreachable =
+      /timeout|ECONNREFUSED|ENOTFOUND|ENETUNREACH|ECONNRESET|ETIMEDOUT|EAI_AGAIN|getaddrinfo/i.test(msg);
+    return { synced: false, reason: msg, online: !unreachable, cloudAuth: true };
   }
 }
 
