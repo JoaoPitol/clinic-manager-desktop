@@ -109,26 +109,38 @@ function writeDB(data) {
     fs.renameSync(tmpPath, dataPath);
 }
 
-function registerClinic(data) {
+function registerClinic(data, options = {}) {
+    const skipInvite = options.skipInviteCheck === true;
+    const inviteTrim = typeof data.inviteCode === 'string' ? data.inviteCode.trim() : '';
+    if (!skipInvite && !inviteTrim) {
+        return { success: false, error: 'Código de convite é obrigatório. Peça um convite ao administrador.' };
+    }
+
     const db = readDB();
     if (db.clinics.find(c => c.username === data.username)) {
         return { success: false, error: 'Usuário já existe' };
     }
 
+    const defaultSettings = {
+        themeMode: 'dark',
+        accentColor: 'blue',
+        telefoneClinica: '',
+        whatsappRemindersEnabled: false,
+        whatsappMessageTemplate: 'Olá {nomePaciente}, lembramos da sua consulta hoje às {hora} na clínica {nomeClinica}. Dúvidas, contate {telefoneClinica}.'
+    };
+
     const newClinic = {
-        id: crypto.randomUUID(),
+        id: data.id || crypto.randomUUID(),
         nome: data.nome,
         cnpj: data.cnpj,
         cro: data.cro,
         username: data.username,
         password: hashPassword(data.password),
-        settings: {
-            themeMode: 'dark', // 'dark' ou 'light'
-            accentColor: 'blue', // 'blue', 'green', 'purple', 'orange', 'pink'
-            telefoneClinica: '',
-            whatsappRemindersEnabled: false,
-            whatsappMessageTemplate: 'Olá {nomePaciente}, lembramos da sua consulta hoje às {hora} na clínica {nomeClinica}. Dúvidas, contate {telefoneClinica}.'
-        }
+        settings: (() => {
+            const base = data.settings ? { ...defaultSettings, ...data.settings } : { ...defaultSettings };
+            if (!skipInvite && inviteTrim) base.pendingInviteToken = inviteTrim;
+            return base;
+        })(),
     };
 
     db.clinics.push(newClinic);
@@ -160,9 +172,32 @@ function getClinic(clinicId) {
     if (clinic) {
         // Não retornar a senha!
         const { password, ...clinicData } = clinic;
+        if (clinicData.settings && typeof clinicData.settings === 'object' && 'pendingInviteToken' in clinicData.settings) {
+            const { pendingInviteToken: _p, ...restSettings } = clinicData.settings;
+            clinicData.settings = restSettings;
+        }
         return { success: true, clinic: clinicData };
     }
     return { success: false, error: 'Clínica não encontrada' };
+}
+
+/** Só para o processo main (convite para registo na nuvem); não expor ao renderer. */
+function getPendingCloudInvite(clinicId) {
+    const db = readDB();
+    const clinic = db.clinics.find(c => c.id === clinicId);
+    const t = clinic?.settings?.pendingInviteToken;
+    return typeof t === 'string' && t.trim() ? t.trim() : null;
+}
+
+function clearPendingCloudInvite(clinicId) {
+    const db = readDB();
+    const index = db.clinics.findIndex(c => c.id === clinicId);
+    if (index === -1) return;
+    const s = { ...(db.clinics[index].settings || {}) };
+    if (!('pendingInviteToken' in s)) return;
+    delete s.pendingInviteToken;
+    db.clinics[index] = { ...db.clinics[index], settings: s };
+    writeDB(db);
 }
 
 function updateClinic(clinicId, data) {
@@ -171,9 +206,17 @@ function updateClinic(clinicId, data) {
     if (index !== -1) {
         // Campos sensíveis nunca são alterados por esta função
         const { password: _p, id: _id, username: _u, ...safeData } = data;
+        if (safeData.settings && typeof safeData.settings === 'object' && 'pendingInviteToken' in safeData.settings) {
+            const { pendingInviteToken: _r, ...rest } = safeData.settings;
+            safeData.settings = rest;
+        }
         db.clinics[index] = { ...db.clinics[index], ...safeData };
         writeDB(db);
-        const { password, ...clinicData } = db.clinics[index];
+        let { password, ...clinicData } = db.clinics[index];
+        if (clinicData.settings && typeof clinicData.settings === 'object' && 'pendingInviteToken' in clinicData.settings) {
+            const { pendingInviteToken: _p, ...restSettings } = clinicData.settings;
+            clinicData = { ...clinicData, settings: restSettings };
+        }
         return { success: true, clinic: clinicData };
     }
     return { success: false, error: 'Clínica não encontrada' };
@@ -508,6 +551,8 @@ module.exports = {
     registerClinic,
     loginClinic,
     getClinic,
+    getPendingCloudInvite,
+    clearPendingCloudInvite,
     getAllClinics,
     updateClinic,
     addPatient,

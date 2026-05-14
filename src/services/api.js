@@ -6,8 +6,7 @@ const api = {
     if (url === '/auth/login') {
        const res = await window.electronAPI.loginClinic(data);
        if (!res.success) throw new Error(res.error);
-       // Simulamos o token JWT usando o ID da clínica para identificar de quem é o paciente
-       return { data: { accessToken: res.clinicId, clinicName: res.nome } }; 
+       return { data: { accessToken: res.clinicId, clinicName: res.nome, restoredFromCloud: !!res.restoredFromCloud } };
     }
     
     if (url === '/auth/register') {

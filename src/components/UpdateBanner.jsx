@@ -72,6 +72,7 @@ const UpdateBanner = ({ clinicId }) => {
 
   const syncLabel = () => {
     if (!syncState) return '';
+    if (syncState.restoredFromCloud) return `Dados restaurados da nuvem${syncState.syncedAt ? ` às ${formatSyncTime(syncState.syncedAt)}` : ''} ✓`;
     if (!syncState.online) return syncState.detail || 'Offline — API inacessível, sem rede ou servidor parado';
     if (syncState.cloudAuth === false) {
       const base =

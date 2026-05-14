@@ -91,7 +91,7 @@ const Login = () => {
   const [cnpj, setCnpj] = useState('');
   const [cro, setCro] = useState('');
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -111,6 +111,10 @@ const Login = () => {
     setCnpj(formatted);
 
     const digits = formatted.replace(/\D/g, '');
+    if (digits.length === 0) {
+      setCnpjStatus({ status: 'idle', msg: '' });
+      return;
+    }
     if (digits.length < 14) {
       setCnpjStatus({ status: 'idle', msg: '' });
       return;
@@ -124,6 +128,8 @@ const Login = () => {
   };
 
   const handleCnpjBlur = async () => {
+    const digits = cnpj.replace(/\D/g, '');
+    if (digits.length === 0) return;
     if (!validarCNPJ(cnpj)) return;
     await consultarCNPJReceita(cnpj);
   };
@@ -205,31 +211,50 @@ const Login = () => {
 
     try {
       if (isRegistering) {
-        // 1. Valida CNPJ localmente
-        if (!validarCNPJ(cnpj)) {
-          setError('CNPJ inválido. Verifique os dígitos e tente novamente.');
+        const cnpjDigits = cnpj.replace(/\D/g, '');
+        if (cnpjDigits.length > 0 && cnpjDigits.length !== 14) {
+          setError('CNPJ incompleto: use 14 dígitos ou deixe o campo em branco.');
           return;
         }
 
-        // 2. Valida CRO
+        if (cnpjDigits.length === 14) {
+          if (!validarCNPJ(cnpj)) {
+            setError('CNPJ inválido. Verifique os dígitos e tente novamente.');
+            return;
+          }
+          const cnpjAprovado = await consultarCNPJReceita(cnpj);
+          if (!cnpjAprovado) {
+            setError('Cadastro bloqueado: o CNPJ informado está inativo ou não existe na Receita Federal.');
+            return;
+          }
+        }
+
+        // Valida CRO
         const { valido: croValido, msg: croMsg } = validarCRO(cro);
         if (!croValido) {
           setError(`CRO inválido: ${croMsg}`);
           return;
         }
 
-        // 3. Consulta Receita Federal (pode bloquear se CNPJ inativo)
-        const cnpjAprovado = await consultarCNPJReceita(cnpj);
-        if (!cnpjAprovado) {
-          setError('Cadastro bloqueado: o CNPJ informado está inativo ou não existe na Receita Federal.');
+        if (!inviteCode.trim()) {
+          setError('Informe o código de convite enviado pelo administrador.');
           return;
         }
 
-        // 4. Registra
-        await api.post('/auth/register', { nome, cnpj, cro, username, password });
+        // Regista
+        await api.post('/auth/register', {
+          nome,
+          cnpj: cnpjDigits.length === 14 ? cnpj : '',
+          cro,
+          username,
+          password,
+          inviteCode: inviteCode.trim(),
+        });
         setSuccessMsg('Clínica cadastrada com sucesso! Faça login.');
         setIsRegistering(false);
         setPassword('');
+        setInviteCode('');
+        setCnpj('');
         setCnpjStatus({ status: 'idle', msg: '' });
         setCroStatus({ status: 'idle', msg: '' });
       } else {
@@ -241,12 +266,18 @@ const Login = () => {
           document.title = response.data.clinicName;
         }
 
+        // PC novo: dados já restaurados da nuvem — não mostrar modal de migração
+        if (response.data.restoredFromCloud) {
+          localStorage.setItem('@ClinicManager:migrationDone', '1');
+          navigate('/dashboard');
+          return;
+        }
+
         // Verifica se é a primeira sincronização (lastSyncAt não existe)
         const migrationDismissed = localStorage.getItem('@ClinicManager:migrationDone');
         if (!migrationDismissed) {
           setPendingClinicId(clinicId);
           setShowMigrationModal(true);
-          // Navega para o dashboard mas com o modal por cima
           navigate('/dashboard');
           return;
         }
@@ -264,15 +295,21 @@ const Login = () => {
     setIsRegistering(!isRegistering);
     setError('');
     setSuccessMsg('');
+    setInviteCode('');
+    setCnpj('');
     setCnpjStatus({ status: 'idle', msg: '' });
     setCroStatus({ status: 'idle', msg: '' });
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
+  const cnpjDigitsOnly = cnpj.replace(/\D/g, '');
+  const cnpjBlocking =
+    (cnpjDigitsOnly.length > 0 && cnpjDigitsOnly.length < 14)
+    || (cnpjDigitsOnly.length === 14 && (cnpjStatus.status === 'error' || cnpjStatus.status === 'checking'));
+
   const canSubmit = !loading && (!isRegistering || (
-    cnpjStatus.status !== 'error' &&
-    cnpjStatus.status !== 'checking' &&
+    !cnpjBlocking &&
     croStatus.status !== 'error'
   ));
 
@@ -303,7 +340,7 @@ const Login = () => {
 
         <h2 style={{ marginBottom: '8px', fontSize: '1.8rem', fontWeight: 600 }}>ClinicManager</h2>
         <p style={{ color: 'var(--text-secondary)', marginBottom: '32px', fontSize: '0.95rem' }}>
-          {isRegistering ? 'Crie sua conta para começar' : 'Faça login para gerenciar sua clínica'}
+          {isRegistering ? 'Crie a conta do consultório com o código de convite que recebeu' : 'Faça login para gerenciar sua clínica'}
         </p>
 
         {error     && <div style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--error)', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.88rem', textAlign: 'left' }}>{error}</div>}
@@ -312,6 +349,24 @@ const Login = () => {
         <form onSubmit={handleSubmit} style={{ textAlign: 'left' }}>
           {isRegistering && (
             <>
+              {/* Convite */}
+              <div style={{ marginBottom: '18px' }}>
+                <label className="input-label">Código de convite</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="cminv_…"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  required
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                  O cadastro na nuvem só é possível com um convite válido enviado pelo dono do produto.
+                </p>
+              </div>
+
               {/* Nome */}
               <div style={{ marginBottom: '18px' }}>
                 <label className="input-label">Nome da Clínica</label>
@@ -319,17 +374,16 @@ const Login = () => {
                   onChange={(e) => setNome(e.target.value)} required />
               </div>
 
-              {/* CNPJ */}
+              {/* CNPJ (opcional) */}
               <div style={{ marginBottom: '18px' }}>
-                <label className="input-label">CNPJ</label>
+                <label className="input-label">CNPJ (opcional)</label>
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="00.000.000/0000-00"
+                  placeholder="Deixe em branco se não tiver CNPJ"
                   value={cnpj}
                   onChange={handleCnpjChange}
                   onBlur={handleCnpjBlur}
-                  required
                   style={borderColor(cnpjStatus.status) ? { borderColor: borderColor(cnpjStatus.status), boxShadow: `0 0 0 2px ${borderColor(cnpjStatus.status)}30` } : {}}
                 />
                 <FieldStatus {...cnpjStatus} />
@@ -385,7 +439,7 @@ const Login = () => {
               {isRegistering ? 'Já tem uma conta?' : 'Ainda não tem conta?'}
             </span>{' '}
             <span onClick={switchMode} style={{ color: 'var(--accent-cyan)', cursor: 'pointer', fontWeight: 500 }}>
-              {isRegistering ? 'Faça Login' : 'Cadastre-se'}
+              {isRegistering ? 'Faça Login' : 'Tenho um convite'}
             </span>
           </div>
         </form>

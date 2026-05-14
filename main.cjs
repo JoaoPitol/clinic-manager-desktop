@@ -18,6 +18,19 @@ const activeSessions = new Map();
 // Mapa: clinicId → cloudJWT (obtido após cloudLogin bem-sucedido)
 const cloudTokens = new Map();
 
+// Mapa: clinicId → Buffer(32) — chave AES-256 derivada das credenciais do utilizador.
+// Nunca sai da memória do processo main; não é persistida em disco nem enviada à rede.
+const cloudEncryptionKeys = new Map();
+/** Chave derivada com username local bruto (antes da normalização) — só para decriptar dados antigos. */
+const cloudEncryptionKeysLegacy = new Map();
+
+function rememberCloudEncryptionPairs(clinicId, password, username) {
+  const { key, legacy } = cloudSync.buildEncryptionKeyPair(password, username);
+  cloudEncryptionKeys.set(clinicId, key);
+  if (legacy) cloudEncryptionKeysLegacy.set(clinicId, legacy);
+  else cloudEncryptionKeysLegacy.delete(clinicId);
+}
+
 // Intervalo de sync periódico (5 minutos)
 let syncInterval = null;
 
@@ -140,6 +153,19 @@ function createWindow() {
     // mainWindow.webContents.openDevTools();
   }
 
+  // Limpa tokens de sessão do localStorage ao carregar a janela.
+  // Garante que após reiniciar o app o utilizador é sempre enviado para login
+  // (evita estado inválido: localStorage com token mas preload sem _sessionToken).
+  // Apenas em produção: em dev o Vite faz hot reload e limparia a sessão continuamente.
+  if (process.env.NODE_ENV !== 'development') {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow.webContents.executeJavaScript(`
+        localStorage.removeItem('@ClinicManager:token');
+        localStorage.removeItem('@ClinicManager:nome');
+      `).catch(() => {});
+    });
+  }
+
   mainWindow.on('closed', function () {
     mainWindow = null;
     if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
@@ -178,7 +204,9 @@ function createWindow() {
     for (const [sessionToken, clinicId] of activeSessions) {
       const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
       if (!token) continue;
-      const result = await cloudSync.syncClinic(db, clinicId, token).catch(() => ({
+      const encKey = cloudEncryptionKeys.get(clinicId) || null;
+      const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
+      const result = await cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy).catch(() => ({
         synced: false,
         online: false,
         reason: 'erro',
@@ -204,6 +232,12 @@ app.on('ready', () => {
   ipcMain.handle('register-clinic', async (event, data) => {
     const result = db.registerClinic(data);
     if (result.success && result.clinicId) {
+      // Derivar chave de criptografia imediatamente após cadastro
+      try {
+        rememberCloudEncryptionPairs(result.clinicId, data.password, data.username);
+      } catch (e) {
+        console.error('[main] Falha ao derivar chave de criptografia:', e.message);
+      }
       cloudSync.provisionCloudAccount({
         id: result.clinicId,
         nome: data.nome,
@@ -211,16 +245,79 @@ app.on('ready', () => {
         cro: data.cro,
         username: data.username,
         settings: {},
-      }, data.password).catch((err) => console.error('[cloudSync] provision pós-cadastro:', err));
+        inviteToken: String(data.inviteCode).trim(),
+      }, data.password).then((prov) => {
+        if (prov.ok) db.clearPendingCloudInvite(result.clinicId);
+      }).catch((err) => console.error('[cloudSync] provision pós-cadastro:', err));
     }
     return result;
   });
 
   ipcMain.handle('login-clinic', async (event, data) => {
-    const result = db.loginClinic(data);
+    let result = db.loginClinic(data);
+
+    // ── Restauro automático da nuvem (PC novo / base local apagada) ──────────
+    if (!result.success && await cloudSync.isOnline()) {
+      const cloudResult = await cloudSync.cloudLogin(data.username, data.password);
+      if (cloudResult.ok) {
+        const profileRes = await cloudSync.getCloudProfile(cloudResult.token);
+        if (profileRes.ok) {
+          const c = profileRes.clinic;
+          const regResult = db.registerClinic({
+            id: c.id,                         // mesmo UUID da nuvem — essencial para sync
+            nome: c.nome || data.username,
+            cnpj: c.cnpj || '',
+            cro: c.cro || '',
+            username: data.username,
+            password: data.password,
+            settings: c.settings || {},       // restaura configurações da clínica
+          }, { skipInviteCheck: true });
+          if (regResult.success) {
+            result = db.loginClinic(data);
+            if (result.success) {
+              const sessionToken = crypto.randomBytes(32).toString('hex');
+              activeSessions.set(sessionToken, result.clinicId);
+              cloudTokens.set(result.clinicId, cloudResult.token);
+              db.setCloudToken(result.clinicId, cloudResult.token);
+              // Derivar e armazenar chave de criptografia
+              try {
+                rememberCloudEncryptionPairs(result.clinicId, data.password, data.username);
+              } catch (e) {
+                console.error('[main] Falha ao derivar chave no restore:', e.message);
+              }
+              const encKey = cloudEncryptionKeys.get(result.clinicId) || null;
+              const encLegacy = cloudEncryptionKeysLegacy.get(result.clinicId) || null;
+              // Puxa todos os dados da nuvem (decriptados automaticamente)
+              const syncResult = await cloudSync.syncClinic(db, result.clinicId, cloudResult.token, encKey, encLegacy);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('sync-status', {
+                  synced: syncResult.synced,
+                  online: true,
+                  cloudAuth: true,
+                  syncedAt: syncResult.synced ? new Date().toISOString() : undefined,
+                  noBulkSync: syncResult.reason === 'no-sync-endpoint',
+                  hint: null,
+                  detail: null,
+                  restoredFromCloud: true,
+                });
+              }
+              return { ...result, sessionToken, restoredFromCloud: true };
+            }
+          }
+        }
+      }
+    }
+
     if (result.success) {
       const sessionToken = crypto.randomBytes(32).toString('hex');
       activeSessions.set(sessionToken, result.clinicId);
+
+      // Derivar e armazenar chave de criptografia em memória
+      try {
+        rememberCloudEncryptionPairs(result.clinicId, data.password, data.username);
+      } catch (e) {
+        console.error('[main] Falha ao derivar chave de criptografia no login:', e.message);
+      }
 
       // Tenta login na nuvem; se o Postgres estiver vazio (401), cria a conta via /api/auth/register e loga de novo.
       cloudSync.cloudLogin(data.username, data.password).then(async (cloudResult) => {
@@ -232,6 +329,7 @@ app.on('ready', () => {
             const clin = db.getClinic(result.clinicId);
             if (clin.success) {
               const c = clin.clinic;
+              const pendingInv = db.getPendingCloudInvite(result.clinicId);
               const prov = await cloudSync.provisionCloudAccount({
                 id: c.id,
                 nome: c.nome,
@@ -239,7 +337,9 @@ app.on('ready', () => {
                 cro: c.cro,
                 username: c.username,
                 settings: c.settings || {},
+                inviteToken: pendingInv || undefined,
               }, data.password);
+              if (prov.ok) db.clearPendingCloudInvite(result.clinicId);
               if (prov.message) detail = prov.message;
               if (prov.ok) final = prov;
             }
@@ -249,7 +349,9 @@ app.on('ready', () => {
         if (final.ok) {
           cloudTokens.set(result.clinicId, final.token);
           db.setCloudToken(result.clinicId, final.token);
-          const syncResult = await cloudSync.syncClinic(db, result.clinicId, final.token);
+          const encKey = cloudEncryptionKeys.get(result.clinicId) || null;
+          const encLegacy = cloudEncryptionKeysLegacy.get(result.clinicId) || null;
+          const syncResult = await cloudSync.syncClinic(db, result.clinicId, final.token, encKey, encLegacy);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('sync-status', {
               synced: syncResult.synced,
@@ -291,9 +393,13 @@ app.on('ready', () => {
     if (clinicId) {
       const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
       if (token) {
-        cloudSync.syncClinic(db, clinicId, token).catch(() => {});
+        const encKey = cloudEncryptionKeys.get(clinicId) || null;
+        const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
+        cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy).catch(() => {});
       }
       cloudTokens.delete(clinicId);
+      cloudEncryptionKeys.delete(clinicId); // remover chave da memória ao deslogar
+      cloudEncryptionKeysLegacy.delete(clinicId);
     }
     activeSessions.delete(sessionToken);
     return { success: true };
@@ -304,7 +410,9 @@ app.on('ready', () => {
     if (!validateSession(sessionToken, clinicId)) return { success: false, error: 'Sessão inválida' };
     const token = cloudTokens.get(clinicId) || db.getCloudToken(clinicId);
     if (!token) return { success: false, error: 'Não autenticado na nuvem' };
-    const result = await cloudSync.syncClinic(db, clinicId, token);
+    const encKey = cloudEncryptionKeys.get(clinicId) || null;
+    const encLegacy = cloudEncryptionKeysLegacy.get(clinicId) || null;
+    const result = await cloudSync.syncClinic(db, clinicId, token, encKey, encLegacy);
     const hint =
       result.online === false
         ? 'offline'

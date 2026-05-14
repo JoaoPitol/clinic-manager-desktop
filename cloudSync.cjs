@@ -1,22 +1,135 @@
 /**
  * cloudSync.cjs — camada de sincronização offline-first com o backend na nuvem.
  *
- * Suporta:
- *  - Backend Spring: /api/auth/login, /api/auth/register + GET /health ou /actuator/health
- *  - Backend Node:  /auth/login, /auth/register + GET /health
- *
+ * Backend: Node.js /auth/* + GET /health
  * URL padrão: defina CLINIC_CLOUD_URL se o deploy tiver outro host.
  */
 
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
+
+// ── Criptografia de dados clínicos (AES-256-GCM) ─────────────────────────────
+// Versão do esquema — permite migração futura sem quebrar dados antigos.
+const ENC_VERSION = 'cm1';
+
+/**
+ * Username canónico para API e para derivação de chave (deve coincidir com provisionCloudAccount).
+ */
+function normalizeCloudUsername(raw) {
+  const rawUsername = String(raw ?? '').trim();
+  if (!rawUsername) return '';
+  return rawUsername
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._@\-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .toLowerCase()
+    .slice(0, 50);
+}
+
+/**
+ * Deriva uma chave AES-256 a partir das credenciais da clínica.
+ * O material de username é sempre o valor normalizado (igual ao enviado em /auth/login e /auth/register).
+ */
+function deriveEncryptionKey(password, username) {
+  const user = normalizeCloudUsername(username);
+  return crypto.scryptSync(
+    `${user}\x00${password}`,
+    'clinic-manager-patient-data:v1',
+    32 // 256 bits
+  );
+}
+
+/** Comportamento antigo: username tal como na UI / BD local (sem normalização). Só para decriptar dados antigos. */
+function deriveEncryptionKeyLegacy(password, username) {
+  return crypto.scryptSync(
+    `${username}\x00${password}`,
+    'clinic-manager-patient-data:v1',
+    32
+  );
+}
+
+/**
+ * Par (canónica, legado) para sync: legado só quando o username local difere do normalizado.
+ */
+function buildEncryptionKeyPair(password, username) {
+  const raw = username == null ? '' : String(username);
+  const norm = normalizeCloudUsername(username);
+  const key = deriveEncryptionKey(password, username);
+  if (norm === raw) return { key, legacy: null };
+  return { key, legacy: deriveEncryptionKeyLegacy(password, username) };
+}
+
+/**
+ * Encripta os campos sensíveis de um registo antes de enviar para a nuvem.
+ * Mantém id, clinicId, updatedAt e _deleted em claro (necessários pelo servidor
+ * para resolução de conflitos e consultas SQL), encripta todo o resto.
+ */
+function encryptRecord(record, key) {
+  if (!key || !record) return record;
+  const { id, clinicId, updatedAt, updated_at, _deleted, pendingSync, ...sensitive } = record;
+  const iv = crypto.randomBytes(12); // 96 bits — tamanho recomendado para GCM
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const plain = Buffer.from(JSON.stringify(sensitive), 'utf8');
+  const ct = Buffer.concat([cipher.update(plain), cipher.final()]);
+  const tag = cipher.getAuthTag(); // 16 bytes de autenticação
+  return {
+    id,
+    ...(clinicId !== undefined ? { clinicId } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+    ...(updated_at !== undefined ? { updated_at } : {}),
+    ...(typeof _deleted !== 'undefined' ? { _deleted } : {}),
+    _enc: ENC_VERSION,
+    _iv: iv.toString('base64'),
+    _ct: Buffer.concat([ct, tag]).toString('base64'),
+  };
+}
+
+/**
+ * Decripta um registo recebido da nuvem.
+ * Se o registo não tiver _enc (dados legados em claro), retorna-o intacto.
+ * Retorna null se a autenticação GCM falhar (dados corrompidos ou chave errada).
+ */
+function tryDecryptRecord(record, key) {
+  const iv = Buffer.from(record._iv, 'base64');
+  const ctWithTag = Buffer.from(record._ct, 'base64');
+  const tag = ctWithTag.slice(-16);
+  const ct = ctWithTag.slice(0, -16);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
+  const sensitive = JSON.parse(plain.toString('utf8'));
+  const { _enc: _e, _iv: _i, _ct: _c, ...meta } = record;
+  return { ...meta, ...sensitive };
+}
+
+function decryptRecord(record, key, keyLegacy = null) {
+  if (!record) return null;
+  if (record._enc !== ENC_VERSION) return record; // dado legado — em claro
+  if (!key) {
+    console.warn('[cloudSync] Registo encriptado recebido mas sem chave disponível');
+    return record; // devolve envelope sem decriptar
+  }
+  try {
+    return tryDecryptRecord(record, key);
+  } catch (e) {
+    if (keyLegacy && Buffer.compare(key, keyLegacy) !== 0) {
+      try {
+        return tryDecryptRecord(record, keyLegacy);
+      } catch (e2) {
+        console.error('[cloudSync] Falha na decriptação AES-GCM (legado):', e2.message);
+        return null;
+      }
+    }
+    console.error('[cloudSync] Falha na decriptação AES-GCM:', e.message);
+    return null;
+  }
+}
 
 const CLOUD_URL = (process.env.CLINIC_CLOUD_URL || 'https://clinic-manager-api-production.up.railway.app').replace(/\/$/, '');
 
 const SYNC_TIMEOUT_MS = 15000;
-
-/** 'spring' | 'node' | null — definido após login ou registro bem-sucedido na nuvem */
-let _cloudApiKind = null;
 
 function request(method, path, body, token) {
   return new Promise((resolve, reject) => {
@@ -65,109 +178,76 @@ function request(method, path, body, token) {
 
 /**
  * Verifica se o servidor Clinic Manager está activo.
- * Distingue "algum HTTP 200 qualquer" de "o nosso servidor a responder":
- * o nosso /health devolve { status: 'ok', service: 'clinic-manager-api' }.
- * Se o body não tiver o campo `service`, regista aviso mas ainda conta como online
- * (compatível com versões anteriores que só devolviam { status: 'ok' }).
+ * O nosso /health devolve { status: 'ok', service: 'clinic-manager-api' }.
  */
 async function isOnline() {
-  const paths = ['/health', '/actuator/health'];
-  for (const path of paths) {
-    try {
-      const res = await request('GET', path, null, null);
-      if (res.status !== 200) continue;
-      const body = res.body;
-      if (typeof body === 'object' && body !== null) {
-        if (body.status === 'ok') return true;
-        // Outro JSON 200 — provavelmente não é o nosso servidor
-        console.warn('[cloudSync] /health devolveu JSON inesperado:', JSON.stringify(body).slice(0, 80));
-        continue;
-      }
-      // Texto simples "OK" — não é o nosso servidor (Railway proxy / outro processo)
-      console.warn('[cloudSync] /health devolveu texto simples, não JSON — servidor pode não estar a correr:', String(body).slice(0, 40));
-    } catch {
-      /* próximo */
-    }
+  try {
+    const res = await request('GET', '/health', null, null);
+    if (res.status !== 200) return false;
+    const body = res.body;
+    if (typeof body === 'object' && body !== null && body.status === 'ok') return true;
+    console.warn('[cloudSync] /health devolveu resposta inesperada:', JSON.stringify(body).slice(0, 80));
+  } catch {
+    /* offline */
   }
   return false;
 }
 
-/**
- * Login na nuvem — Spring (/api/auth/login + accessToken) depois Node (/auth/login + token).
- */
 function readApiErrorMessage(body) {
   if (typeof body === 'string' && body.trim()) return body.trim().slice(0, 220);
   if (body && typeof body === 'object') {
     if (body.message) return String(body.message).slice(0, 220);
     if (body.error) return String(body.error).slice(0, 220);
-    if (Array.isArray(body.errors)) {
-      const parts = body.errors
-        .map((e) => {
-          if (typeof e === 'string') return e;
-          const f = e.field || e.objectName || '';
-          const m = e.defaultMessage || e.message || '';
-          return f && m ? `${f}: ${m}` : m || f;
-        })
-        .filter(Boolean);
-      if (parts.length) return parts.join('; ').slice(0, 220);
-    }
   }
   return null;
 }
 
 async function cloudLogin(username, password) {
-  const attempts = [
-    { path: '/api/auth/login', kind: 'spring' },
-    { path: '/auth/login', kind: 'node' },
-  ];
-
-  let lastStatus = null;
-  let lastPath = null;
-  let lastError = null;
-  let lastMessage = null;
-
-  for (const { path, kind } of attempts) {
-    try {
-      const res = await request('POST', path, { username, password }, null);
-      lastStatus = res.status;
-      lastPath = path;
-      const body = typeof res.body === 'object' && res.body ? res.body : {};
-      const token = body.token || body.accessToken;
-      if (res.status === 200 && token) {
-        _cloudApiKind = kind;
-        return { ok: true, token, apiKind: kind };
-      }
-      const msg = readApiErrorMessage(res.body);
-      if (msg) lastMessage = msg;
-    } catch (e) {
-      lastError = e.message;
-      /* tenta próximo endpoint */
+  try {
+    const u = normalizeCloudUsername(username);
+    if (!u) {
+      return { ok: false, status: 400, message: 'Username inválido' };
     }
+    const res = await request('POST', '/auth/login', { username: u, password }, null);
+    const body = typeof res.body === 'object' && res.body ? res.body : {};
+    const token = body.token;
+    if (res.status === 200 && token) {
+      return { ok: true, token };
+    }
+    const message = readApiErrorMessage(res.body);
+    return { ok: false, status: res.status, message };
+  } catch (e) {
+    return { ok: false, error: e.message };
   }
-  return { ok: false, status: lastStatus, path: lastPath, error: lastError, message: lastMessage };
 }
 
 /**
  * Cria (ou recupera) a conta na nuvem e devolve o token.
  * Estratégia: tenta LOGIN primeiro; só regista se receber 401/404.
- * `profile`: { nome, cnpj, username, id?, cro?, settings? }
+ * `profile`: { nome, cnpj, username, id?, cro?, settings?, inviteToken? } — `inviteToken` obrigatório para registo na nuvem (login falhou).
  */
 async function provisionCloudAccount(profile, password) {
   const nome = (profile.nome || '').trim();
   const cnpjDigits = (profile.cnpj || '').replace(/\D/g, '');
-  const username = (profile.username || '').trim();
+  const rawUsername = (profile.username || '').trim();
+  const username = normalizeCloudUsername(profile.username);
   const pass = (password || '').trim();
+
+  if (rawUsername !== username) {
+    console.log(`[cloudSync] username normalizado: "${rawUsername}" → "${username}"`);
+  }
 
   console.log('[cloudSync] provisionCloudAccount:', {
     username,
     nomeOk: !!nome,
-    cnpjDigits,
+    cnpjDigits: cnpjDigits.length,
     passOk: !!pass,
     cloudUrl: CLOUD_URL,
+    hasInvite: !!(profile.inviteToken && String(profile.inviteToken).trim()),
   });
 
-  if (!nome || !cnpjDigits || !username || !pass) {
-    const missing = [!nome && 'nome', !cnpjDigits && 'CNPJ', !username && 'username', !pass && 'senha']
+  if (!nome || !username || !pass) {
+    const missing = [!nome && 'nome', !username && 'username', !pass && 'senha']
       .filter(Boolean).join(', ');
     return {
       ok: false,
@@ -175,10 +255,10 @@ async function provisionCloudAccount(profile, password) {
     };
   }
 
-  if (cnpjDigits.length !== 14) {
+  if (cnpjDigits.length > 0 && cnpjDigits.length !== 14) {
     return {
       ok: false,
-      message: `CNPJ deve ter 14 dígitos (recebido: ${cnpjDigits.length}). Corrija em Configurações da clínica.`,
+      message: 'CNPJ deve ter 14 dígitos ou ficar em branco. Corrija em Configurações da clínica.',
     };
   }
 
@@ -190,78 +270,81 @@ async function provisionCloudAccount(profile, password) {
   }
   console.log('[cloudSync] provision: login falhou, tenta registo —', loginResult.status, loginResult.message);
 
-  // ── 2. Tenta registo (Spring → Node) ────────────────────────────────────
-  const springBody = { nome, cnpj: cnpjDigits, username, password: pass };
+  const inviteToken = (profile.inviteToken && String(profile.inviteToken).trim()) || '';
+  const rawSt = profile.settings || {};
+  const { pendingInviteToken: _omit, ...settingsForCloud } = rawSt;
+
+  // ── 2. Tenta registo ────────────────────────────────────────────────────
+  if (!inviteToken) {
+    return {
+      ok: false,
+      message: 'É necessário um convite válido para criar a conta na nuvem. Use o código enviado pelo administrador ou conclua o cadastro com o convite recebido.',
+    };
+  }
+
   // Só envia `id` se for UUID válido — IDs antigos (timestamp numérico) são rejeitados pelo Postgres
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const nodeId = profile.id && UUID_RE.test(String(profile.id)) ? profile.id : undefined;
 
-  const nodeBody = {
+  const registerBody = {
     ...(nodeId ? { id: nodeId } : {}),
     nome, cnpj: profile.cnpj,
-    cro: profile.cro || '', username, password: pass, settings: profile.settings || {},
+    cro: profile.cro || '', username, password: pass, settings: settingsForCloud,
+    inviteToken,
   };
-
-  const registerAttempts = [
-    { path: '/api/auth/register', body: springBody, kind: 'spring' },
-    { path: '/auth/register', body: nodeBody, kind: 'node' },
-  ];
 
   let lastMessage = loginResult.message || null;
 
-  for (const { path, body, kind } of registerAttempts) {
-    try {
-      const res = await request('POST', path, body, null);
-      const tokenFromBody = typeof res.body === 'object' && res.body
-        ? (res.body.token || res.body.accessToken)
-        : null;
+  try {
+    const res = await request('POST', '/auth/register', registerBody, null);
+    const tokenFromBody = typeof res.body === 'object' && res.body ? res.body.token : null;
 
-      console.log('[cloudSync] register', kind, path, '→', res.status,
-        typeof res.body === 'string' ? res.body.slice(0, 120) : JSON.stringify(res.body).slice(0, 120));
+    console.log('[cloudSync] register node /auth/register →', res.status,
+      JSON.stringify(res.body).slice(0, 120));
 
-      // Sucesso com token direto (Node backend)
-      if (res.status === 201 && tokenFromBody) {
-        _cloudApiKind = kind;
-        return { ok: true, token: tokenFromBody, apiKind: kind };
-      }
-
-      // Spring: 201 com body string → faz login
-      if (res.status === 201) {
-        _cloudApiKind = kind;
-        const afterReg = await cloudLogin(username, pass);
-        if (afterReg.ok) return afterReg;
-        lastMessage = afterReg.message || `Registo OK na ${kind} mas login falhou (${afterReg.status})`;
-        continue;
-      }
-
-      // 400 / 409 / 422 — conta já existe ou dados inválidos → tenta login
-      if (res.status === 400 || res.status === 409 || res.status === 422) {
-        const errText = readApiErrorMessage(res.body);
-        if (errText) lastMessage = errText;
-        console.warn('[cloudSync] register recusado', kind, res.status, errText || '');
-        const afterLogin = await cloudLogin(username, pass);
-        if (afterLogin.ok) return afterLogin;
-        if (errText) lastMessage = errText;
-        continue;
-      }
-
-      // 5xx ou outro erro
-      const errText = readApiErrorMessage(res.body);
-      lastMessage = errText
-        ? `Erro ${res.status} em ${kind}: ${errText}`
-        : `Erro ${res.status} ao chamar ${path} (${kind})`;
-      console.error('[cloudSync] register HTTP', res.status, path, errText || res.body);
-
-    } catch (e) {
-      lastMessage = `Falha de rede ao contactar ${path}: ${e.message}`;
-      console.warn('[cloudSync] register exception', path, e.message);
+    if (res.status === 201 && tokenFromBody) {
+      return { ok: true, token: tokenFromBody };
     }
+
+    // 400 / 409 — conta já existe ou dados inválidos → tenta login novamente
+    if (res.status === 400 || res.status === 403 || res.status === 409 || res.status === 422) {
+      const errText = readApiErrorMessage(res.body);
+      if (errText) lastMessage = errText;
+      console.warn('[cloudSync] register recusado', res.status, errText || '');
+      const afterLogin = await cloudLogin(username, pass);
+      if (afterLogin.ok) return afterLogin;
+      if (errText) lastMessage = errText;
+    } else {
+      const errText = readApiErrorMessage(res.body);
+      lastMessage = errText || `Erro ${res.status} ao registar`;
+      console.error('[cloudSync] register HTTP', res.status, errText || res.body);
+    }
+  } catch (e) {
+    lastMessage = `Falha de rede: ${e.message}`;
+    console.warn('[cloudSync] register exception', e.message);
   }
 
   return {
     ok: false,
     message: lastMessage || `Registo na nuvem falhou. URL: ${CLOUD_URL}`,
   };
+}
+
+/**
+ * Obtém o perfil da clínica autenticada na nuvem (GET /auth/me).
+ * Retorna { ok, clinic } onde clinic = { id, username, nome, cnpj, cro, settings }.
+ */
+async function getCloudProfile(token) {
+  if (!token) return { ok: false };
+  try {
+    const res = await request('GET', '/auth/me', null, token);
+    if (res.status === 200 && res.body?.clinic) {
+      return { ok: true, clinic: res.body.clinic };
+    }
+    return { ok: false, status: res.status };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 }
 
 async function cloudRegister(clinicData, password) {
@@ -273,6 +356,7 @@ async function cloudRegister(clinicData, password) {
       id: clinicData.id,
       cro: clinicData.cro,
       settings: clinicData.settings,
+      inviteToken: clinicData.inviteToken,
     },
     password
   );
@@ -280,16 +364,17 @@ async function cloudRegister(clinicData, password) {
 
 /**
  * Sincronização em lote (somente API Node com POST /auth/sync).
+ * @param {object} db - instância do banco local
+ * @param {string} clinicId - UUID da clínica
+ * @param {string} token - JWT de autenticação na nuvem
+ * @param {Buffer|null} encryptionKey - chave AES-256 derivada (username normalizado);
+ *   se null, dados são enviados sem criptografia (legado / primeiro login)
+ * @param {Buffer|null} [encryptionKeyLegacy] - tentativa de decriptação se a chave canónica falhar
  */
-async function syncClinic(db, clinicId, token) {
+async function syncClinic(db, clinicId, token, encryptionKey = null, encryptionKeyLegacy = null) {
   if (!token) return { synced: false, reason: 'sem-token', online: false, cloudAuth: false };
 
   if (!await isOnline()) return { synced: false, reason: 'offline', online: false, cloudAuth: true };
-
-  if (_cloudApiKind === 'spring') {
-    console.warn('[cloudSync] API Spring: sem POST /auth/sync — dados só locais.');
-    return { synced: false, reason: 'no-sync-endpoint', online: true, cloudAuth: true };
-  }
 
   try {
     const localDB = db.readDBForSync(clinicId);
@@ -297,9 +382,15 @@ async function syncClinic(db, clinicId, token) {
 
     // pendingSync !== false: inclui registros novos (true) e legados (undefined)
     // mas exclui os já confirmados pela nuvem (false)
-    const pendingPatients = localDB.patients.filter((p) => p.pendingSync !== false);
-    const pendingAppointments = localDB.appointments.filter((a) => a.pendingSync !== false);
-    const pendingExpenses = localDB.expenses.filter((e) => e.pendingSync !== false);
+    const pendingPatients = localDB.patients
+      .filter((p) => p.pendingSync !== false)
+      .map((p) => encryptionKey ? encryptRecord(p, encryptionKey) : p);
+    const pendingAppointments = localDB.appointments
+      .filter((a) => a.pendingSync !== false)
+      .map((a) => encryptionKey ? encryptRecord(a, encryptionKey) : a);
+    const pendingExpenses = localDB.expenses
+      .filter((e) => e.pendingSync !== false)
+      .map((e) => encryptionKey ? encryptRecord(e, encryptionKey) : e);
 
     const res = await request(
       'POST',
@@ -329,14 +420,19 @@ async function syncClinic(db, clinicId, token) {
 
     const remote = res.body;
 
+    // Decripta registros recebidos da nuvem antes de armazenar localmente
+    const decryptList = (list) => (list || [])
+      .map((r) => (encryptionKey ? decryptRecord(r, encryptionKey, encryptionKeyLegacy) : r))
+      .filter(Boolean); // filtra registros que falharam na decriptação
+
     db.applySyncResult(clinicId, {
-      patients: remote.patients || [],
-      appointments: remote.appointments || [],
-      expenses: remote.expenses || [],
+      patients: decryptList(remote.patients),
+      appointments: decryptList(remote.appointments),
+      expenses: decryptList(remote.expenses),
       syncedAt: remote.syncedAt,
     });
 
-    console.log(`[cloudSync] Sync OK @ ${remote.syncedAt}`);
+    console.log(`[cloudSync] Sync OK @ ${remote.syncedAt}${encryptionKey ? ' (encriptado)' : ''}`);
     return { synced: true, online: true, cloudAuth: true };
   } catch (err) {
     console.error('[cloudSync] Erro na sincronização:', err.message);
@@ -349,6 +445,10 @@ module.exports = {
   cloudLogin,
   cloudRegister,
   provisionCloudAccount,
+  getCloudProfile,
   syncClinic,
+  normalizeCloudUsername,
+  deriveEncryptionKey,
+  buildEncryptionKeyPair,
   CLOUD_URL,
 };
