@@ -245,25 +245,59 @@ app.on('ready', () => {
   // Registrando canais de comunicação com o banco local
   ipcMain.handle('register-clinic', async (event, data) => {
     const result = db.registerClinic(data);
-    if (result.success && result.clinicId) {
-      // Derivar chave de criptografia imediatamente após cadastro
-      try {
-        rememberCloudEncryptionPairs(result.clinicId, data.password, data.username);
-      } catch (e) {
-        console.error('[main] Falha ao derivar chave de criptografia:', e.message);
-      }
-      cloudSync.provisionCloudAccount({
-        id: result.clinicId,
-        nome: data.nome,
-        cnpj: data.cnpj,
-        cro: data.cro,
-        username: data.username,
-        settings: {},
-        inviteToken: String(data.inviteCode).trim(),
-      }, data.password).then((prov) => {
-        if (prov.ok) db.clearPendingCloudInvite(result.clinicId);
-      }).catch((err) => console.error('[cloudSync] provision pós-cadastro:', err));
+    if (!result.success || !result.clinicId) {
+      return result;
     }
+
+    try {
+      rememberCloudEncryptionPairs(result.clinicId, data.password, data.username);
+    } catch (e) {
+      console.error('[main] Falha ao derivar chave de criptografia:', e.message);
+    }
+
+    let online = false;
+    try {
+      online = await cloudSync.isOnline();
+    } catch {
+      online = false;
+    }
+
+    const profile = {
+      id: result.clinicId,
+      nome: data.nome,
+      cnpj: data.cnpj,
+      cro: data.cro,
+      username: data.username,
+      settings: {},
+      inviteToken: String(data.inviteCode || '').trim(),
+    };
+
+    if (!online) {
+      cloudSync.provisionCloudAccount(profile, data.password)
+        .then((prov) => {
+          if (prov.ok) db.clearPendingCloudInvite(result.clinicId);
+        })
+        .catch((err) => console.error('[cloudSync] provision pós-cadastro:', err));
+      return result;
+    }
+
+    const prov = await cloudSync.provisionCloudAccount(profile, data.password);
+    if (!prov.ok) {
+      cloudEncryptionKeys.delete(result.clinicId);
+      cloudEncryptionKeysLegacy.delete(result.clinicId);
+      const del = db.deleteClinicById(result.clinicId);
+      if (!del.success) {
+        console.error('[main] rollback cadastro local falhou:', del.error);
+      }
+      return {
+        success: false,
+        error:
+          prov.message
+          || 'Não foi possível validar o convite na nuvem. Verifique o código e tente novamente.',
+      };
+    }
+
+    db.clearPendingCloudInvite(result.clinicId);
     return result;
   });
 

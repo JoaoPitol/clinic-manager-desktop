@@ -148,6 +148,16 @@ function registerClinic(data, options = {}) {
     return { success: true, clinicId: newClinic.id };
 }
 
+/** Remove uma clínica pelo id (ex.: rollback após falha na nuvem). */
+function deleteClinicById(clinicId) {
+    const db = readDB();
+    const index = db.clinics.findIndex((c) => c.id === clinicId);
+    if (index === -1) return { success: false, error: 'Clínica não encontrada' };
+    db.clinics.splice(index, 1);
+    writeDB(db);
+    return { success: true };
+}
+
 function loginClinic(data) {
     const db = readDB();
     const clinic = db.clinics.find(c => c.username === data.username);
@@ -549,6 +559,7 @@ function setCloudToken(clinicId, token) {
 module.exports = {
     getDatabaseFilePath,
     registerClinic,
+    deleteClinicById,
     loginClinic,
     getClinic,
     getPendingCloudInvite,
