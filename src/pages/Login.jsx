@@ -91,6 +91,7 @@ const Login = () => {
   const [cnpj, setCnpj] = useState('');
   const [cro, setCro] = useState('');
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -295,6 +296,7 @@ const Login = () => {
     setIsRegistering(!isRegistering);
     setError('');
     setSuccessMsg('');
+    setPassword('');
     setInviteCode('');
     setCnpj('');
     setCnpjStatus({ status: 'idle', msg: '' });
